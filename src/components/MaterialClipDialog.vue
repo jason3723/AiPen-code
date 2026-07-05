@@ -193,7 +193,7 @@ async function handleSave() {
         <div class="flex-1 overflow-y-auto px-4 py-3 space-y-4">
           <!-- 正在分析 -->
           <div v-if="step === 'analyzing'" class="flex items-center gap-3 py-6 justify-center">
-            <span class="animate-spin text-blue-400 dark:text-blue-300">⏳</span>
+            <span class="animate-spin text-blue-400">⏳</span>
             <span class="text-sm text-gray-600 dark:text-gray-400">AI 正在分析内容并匹配标签...</span>
           </div>
 
@@ -214,7 +214,7 @@ async function handleSave() {
             </div>
 
             <!-- AI 打标签错误 -->
-            <div v-if="aiError" class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-300/50 dark:border-amber-800/30 rounded px-3 py-2">
+            <div v-if="aiError" class="text-xs text-amber-600 dark:text-amber-400 bg-amber-100/60 dark:bg-amber-950/20 border border-amber-300/50 dark:border-amber-800/30 rounded px-3 py-2">
               AI 标签分析失败：{{ aiError }}。将保存为无标签素材。
             </div>
 

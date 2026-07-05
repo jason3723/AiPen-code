@@ -2,28 +2,53 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- ─────────────────────────────────────────────────────────────
+         ★ 防白闪三道防线（在任何 CSS/JS 加载前同步执行）
+         1) 同步读取 localStorage 用户偏好
+         2) 同步读取系统主题（matchMedia，无 IO）
+         3) 内联关键 CSS：基于 <html> 上的 class 决定首帧颜色
+         优先级：用户手动 > 系统主题 > 默认浅色
+         ───────────────────────────────────────────────────────────── -->
     <script>
-      // 在页面渲染前同步读取主题偏好，消除启动闪烁
-      (function() {
-        const theme = localStorage.getItem('aipen-theme');
-        // 仅当用户曾手动切换为深色时才启用；首次启动默认浅色
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        }
+      (function () {
+        try {
+          var stored = localStorage.getItem('aipen-theme');
+          var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var mode = (stored === 'dark' || stored === 'light')
+            ? stored
+            : (sysDark ? 'dark' : 'light');
+          if (mode === 'dark') {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) { /* 静默失败,保持默认浅色 */ }
       })();
     </script>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AiPen — AI 辅助文档写作</title>
-    <!-- 消除启动白屏：在 CSS/JS 加载前就设置背景色 -->
+    <!-- ★ 首屏底色:用 CSS 变量,根据 .dark 切换,保证 WebView2
+         加载 JS 之前的第一帧就是正确的主题色。 -->
     <style>
+      :root {
+        --ae-boot-bg: #ffffff;
+        --ae-boot-fg: #1a1a1a;
+      }
+      html.dark {
+        --ae-boot-bg: #1d2032;
+        --ae-boot-fg: #cdd6f4;
+      }
       html, body, #root {
-        background-color: #ffffff;
+        background-color: var(--ae-boot-bg);
+        color: var(--ae-boot-fg);
         margin: 0;
         overflow: hidden;
       }
-      html.dark, html.dark body, html.dark #root {
-        background-color: #030712;
+      /* Vue 挂载前的占位:防止 #root 空 div 在某些时序下"白闪" */
+      #root:empty::before {
+        content: '';
+        display: block;
+        height: 100vh;
+        background-color: var(--ae-boot-bg);
       }
     </style>
   </head>

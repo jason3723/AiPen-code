@@ -202,7 +202,7 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
         </div>
 
         <!-- 分割线 -->
-        <div class="h-px bg-gradient-to-r from-transparent via-gray-300 dark:via-slate-600/30 to-transparent"></div>
+        <div class="h-px bg-gradient-to-r from-transparent via-slate-600/30 to-transparent"></div>
       </div>
 
       <!-- 变更列表 -->
@@ -210,7 +210,7 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
         <div
           v-for="(block, bi) in changeBlocks"
           :key="bi"
-          class="rounded-md border border-gray-200 dark:border-slate-700/30 overflow-hidden bg-gray-50 dark:bg-slate-800/20"
+          class="rounded-md border border-slate-700/30 overflow-hidden bg-slate-800/20"
         >
           <!-- 修改块：先删后增 -->
           <template v-if="block.kind === 'modified' && block.deleted && block.inserted">
@@ -219,18 +219,18 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
               <div class="w-6 flex items-start justify-center border-l-2 border-emerald-300 dark:border-emerald-500 py-1.5">
                 <span class="text-emerald-600/80 dark:text-emerald-400/80 font-medium select-none">-</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-600 dark:text-slate-300 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-slate-300 whitespace-pre-wrap break-all">
                 <template v-if="block.deleted.inline_changes && block.deleted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.deleted.inline_changes"
                     :key="ci"
                     :class="{
-                      'bg-emerald-400/20 text-emerald-800 dark:text-emerald-100 px-0.5 rounded line-through decoration-emerald-500/50': chunk.tag === 'delete',
-                      'text-gray-400 dark:text-slate-500': chunk.tag === 'equal',
+                      'bg-emerald-400/20 text-emerald-100 px-0.5 rounded line-through decoration-emerald-500/50': chunk.tag === 'delete',
+                      'text-slate-500': chunk.tag === 'equal',
                     }"
                   >{{ chunk.content }}</span>
                 </template>
-                <span v-else class="line-through decoration-emerald-500/40 text-gray-400 dark:text-slate-500">{{ block.deleted.content }}</span>
+                <span v-else class="line-through decoration-emerald-500/40 text-slate-500">{{ block.deleted.content }}</span>
               </div>
             </div>
             <!-- 新增行：琥珀 -->
@@ -238,14 +238,14 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
               <div class="w-6 flex items-start justify-center border-l-2 border-amber-300 dark:border-amber-500 py-1.5">
                 <span class="text-amber-600/80 dark:text-amber-400/80 font-medium select-none">+</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-200 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-slate-200 whitespace-pre-wrap break-all">
                 <template v-if="block.inserted.inline_changes && block.inserted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.inserted.inline_changes"
                     :key="ci"
                     :class="{
-                      'bg-amber-400/20 text-amber-800 dark:text-amber-100 px-0.5 rounded': chunk.tag === 'insert',
-                      'text-gray-400 dark:text-slate-500': chunk.tag === 'equal',
+                      'bg-amber-400/20 text-amber-100 px-0.5 rounded': chunk.tag === 'insert',
+                      'text-slate-500': chunk.tag === 'equal',
                     }"
                   >{{ chunk.content }}</span>
                 </template>
@@ -260,18 +260,18 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
               <div class="w-6 flex items-start justify-center border-l-2 border-emerald-300 dark:border-emerald-500 py-1.5">
                 <span class="text-emerald-600/80 dark:text-emerald-400/80 font-medium select-none">-</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-600 dark:text-slate-300 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-slate-300 whitespace-pre-wrap break-all">
                 <template v-if="block.deleted.inline_changes && block.deleted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.deleted.inline_changes"
                     :key="ci"
                     :class="{
-                      'bg-emerald-400/20 text-emerald-800 dark:text-emerald-100 px-0.5 rounded': chunk.tag === 'delete',
-                      'text-gray-400 dark:text-slate-500': chunk.tag === 'equal',
+                      'bg-emerald-400/20 text-emerald-100 px-0.5 rounded': chunk.tag === 'delete',
+                      'text-slate-500': chunk.tag === 'equal',
                     }"
                   >{{ chunk.content }}</span>
                 </template>
-                <span v-else class="text-gray-400 dark:text-slate-500">{{ block.deleted.content }}</span>
+                <span v-else class="text-slate-500">{{ block.deleted.content }}</span>
               </div>
             </div>
           </template>
@@ -282,14 +282,14 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
               <div class="w-6 flex items-start justify-center border-l-2 border-amber-300 dark:border-amber-500 py-1.5">
                 <span class="text-amber-600/80 dark:text-amber-400/80 font-medium select-none">+</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-200 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-slate-200 whitespace-pre-wrap break-all">
                 <template v-if="block.inserted.inline_changes && block.inserted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.inserted.inline_changes"
                     :key="ci"
                     :class="{
-                      'bg-amber-400/20 text-amber-800 dark:text-amber-100 px-0.5 rounded': chunk.tag === 'insert',
-                      'text-gray-400 dark:text-slate-500': chunk.tag === 'equal',
+                      'bg-amber-400/20 text-amber-100 px-0.5 rounded': chunk.tag === 'insert',
+                      'text-slate-500': chunk.tag === 'equal',
                     }"
                   >{{ chunk.content }}</span>
                 </template>

@@ -31,7 +31,7 @@ const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
 
 // ── 应用版本 ──
-const appVersion = "3.0.0";
+const appVersion = "3.0.2";
 
 const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
@@ -91,13 +91,64 @@ const leftCollapsed = ref(false);
 const rightCollapsed = ref(false);
 
 // ── 侧栏右键菜单 ──
-const ctxMenu = ref<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 });
+const ctxMenu = ref<{ show: boolean; x: number; y: number; type: 'system' | 'text'; selectedText?: string }>({ show: false, x: 0, y: 0, type: 'system' });
+
+/** 智能四向翻转定位：菜单永不出界，不触碰顶部工具栏和底部状态栏 */
+function smartMenuPos(cursorX: number, cursorY: number, menuW: number, menuH: number) {
+  const MARGIN = 8;
+  const HEADER_H = 48;   // .h-12 顶部工具栏
+  const FOOTER_H = 28;   // .h-7  底部状态栏
+
+  // 各方向可用空间
+  const spaceRight  = window.innerWidth - cursorX - MARGIN;
+  const spaceBottom = window.innerHeight - cursorY - FOOTER_H - MARGIN;
+
+  // 水平：优先右侧 → 空间不足时翻转到左侧
+  const x = spaceRight >= menuW
+    ? cursorX
+    : Math.max(MARGIN, cursorX - menuW);
+
+  // 垂直：优先下方 → 空间不足时翻转到上方
+  const y = spaceBottom >= menuH
+    ? cursorY
+    : Math.max(HEADER_H + MARGIN, cursorY - menuH);
+
+  return { x, y };
+}
+
 function onSidebarContextMenu(event: MouseEvent) {
   event.preventDefault();
-  ctxMenu.value = { show: true, x: event.clientX, y: event.clientY };
+  const sel = window.getSelection();
+  const text = sel ? sel.toString().trim() : '';
+  // 根据是否有选中文字切换菜单类型，并智能定位
+  if (text) {
+    const { x, y } = smartMenuPos(event.clientX, event.clientY, 200, 135);
+    ctxMenu.value = { show: true, x, y, type: 'text', selectedText: text };
+  } else {
+    const { x, y } = smartMenuPos(event.clientX, event.clientY, 128, 110);
+    ctxMenu.value = { show: true, x, y, type: 'system' };
+  }
 }
 function onClickAwayContextMenu() {
   ctxMenu.value.show = false;
+}
+function handleSidebarCopy() {
+  const text = ctxMenu.value.selectedText;
+  if (text) navigator.clipboard.writeText(text).catch(() => {});
+  onClickAwayContextMenu();
+}
+function handleSidebarAddToClip() {
+  const text = ctxMenu.value.selectedText;
+  if (text) materialStore.openClipDialog(text);
+  onClickAwayContextMenu();
+}
+function handleSidebarAddToChat() {
+  const text = ctxMenu.value.selectedText;
+  if (text) {
+    store.injectedChatText = text;
+    store.sidebarTab = 'chat';
+  }
+  onClickAwayContextMenu();
 }
 function handleReload() {
   ctxMenu.value.show = false;
@@ -288,6 +339,13 @@ function handleBrowserClip(text: string, url?: string, title?: string) {
     invoke("hide_browser").catch(() => {});
   }
   materialStore.openClipDialog(text, url, title);
+}
+
+// 处理浏览器"添加到 AI 对话"（emit 和 eval 通道共用）
+function handleBrowserAddToChat(text: string) {
+  if (!text) return;
+  store.injectedChatText = text;
+  store.sidebarTab = 'chat';
 }
 
 // ── 素材面板事件 ──
@@ -489,6 +547,13 @@ watch(leftSubTab, async (tab) => {
       await invoke("show_browser");
     }
   } catch { /* 忽略 */ }
+});
+
+// 主题变化 → 同步浏览器 webview 主题
+watch(isDark, async (dark) => {
+  if (browserOpen.value) {
+    invoke("set_browser_theme", { dark }).catch(() => {});
+  }
 });
 
 // 浏览器打开时，窗口大小变化 → 重新定位 webview
@@ -795,39 +860,37 @@ async function handleDiffPlayback(oldText: string, newText: string) {
     }
   } catch { /* 解析失败保持原值 */ }
   await nextTick()
-  await delay(200)
+  await delay(120)
 
   let currentText = oldText
-  const totalLen = Math.max(oldText.length, 1)
   const scrollEl = document.querySelector('.rich-content') as HTMLElement | null
 
   for (let i = 0; i < changeChunks.length; i++) {
     if (diffPlaybackAbort) break
     const chunk = changeChunks[i]
 
-    // 构建增量文本
     const before = currentText.slice(0, chunk.oldPos)
     const after = currentText.slice(chunk.oldPos + chunk.oldText.length)
     currentText = before + chunk.newText + after
     const hlStart = before.length
     const hlEnd = hlStart + chunk.newText.length
 
-    // 1) 平滑滚动到改动区域
+    // 1) 滚动：按字符位置百分比算 scrollTop，始终可靠
+    const pct = currentText.length > 0
+      ? (chunk.oldPos - 30) / currentText.length
+      : 0
     if (scrollEl) {
-      const progress = Math.min(1, Math.max(0, (chunk.oldPos - 20) / totalLen))
-      const targetTop = Math.max(0, progress * (scrollEl.scrollHeight - scrollEl.clientHeight))
-      scrollEl.scrollTo({ top: targetTop, behavior: 'smooth' })
+      scrollEl.scrollTop = Math.max(0, Math.min(1, pct)) * (scrollEl.scrollHeight - scrollEl.clientHeight)
     }
-    await delay(200)
 
-    // 2) 构建 ProseMirror JSON 并高亮修改文本
+    // 2) 构建 JSON 并高亮
     const json = textToDocJson(currentText)
-    richEditor.setContentWithHighlight(json, hlStart, hlEnd)
-    await delay(400)
+    richEditor.setContentWithHighlight(json, hlStart, hlEnd, currentText.length)
+    await delay(160)
 
     // 3) 恢复正常文本
     richEditor.setContentClean(json)
-    await delay(250)
+    await delay(40)
   }
 
   // 回放完成：确保最终内容正确，滚回顶部
@@ -855,6 +918,7 @@ const showTutorial = ref(false);
 // ── 窗口关闭拦截 ──
 let closeRequestUnlisten: (() => void) | null = null;
 let browserClipUnlisten: (() => void) | null = null;
+let browserChatUnlisten: (() => void) | null = null;
 let focusUnlisten: (() => void) | null = null;
 let movedUnlisten: (() => void) | null = null;
 
@@ -876,10 +940,24 @@ onMounted(async () => {
     },
   );
 
+  // 监听浏览器中"添加到 AI 对话"事件（emit 通道）
+  browserChatUnlisten = await listen<{ text: string; url?: string; title?: string }>(
+    "browser-add-to-chat",
+    (event) => {
+      handleBrowserAddToChat(event.payload.text);
+    },
+  );
+
   // 注册全局函数，接收 eval 通道的剪藏调用（on_navigation / 自定义协议 eval 后备）
   (window as any).__aipenReceiveClip = (payload: { text: string; url?: string; title?: string }) => {
     console.log("[AiPen] __aipenReceiveClip 收到剪藏数据", payload?.text?.length ?? 0, "字符");
     handleBrowserClip(payload.text, payload.url, payload.title);
+  };
+
+  // 注册全局函数，接收 eval 通道的"添加到 AI 对话"调用
+  (window as any).__aipenReceiveChat = (payload: { text: string; url?: string; title?: string }) => {
+    console.log("[AiPen] __aipenReceiveChat 收到对话数据", payload?.text?.length ?? 0, "字符");
+    handleBrowserAddToChat(payload.text);
   };
 
   // 窗口 resize 时重定位浏览器 webview
@@ -923,10 +1001,12 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   closeRequestUnlisten?.();
   browserClipUnlisten?.();
+  browserChatUnlisten?.();
   focusUnlisten?.();
   movedUnlisten?.();
   window.removeEventListener("resize", onBrowserResize);
   delete (window as any).__aipenReceiveClip;
+  delete (window as any).__aipenReceiveChat;
 });
 
 function handleCommit() {
@@ -1633,6 +1713,7 @@ async function handleExportWord() {
           :readonly="isViewingHistory || isWritingPhase || isViewingTagDoc"
           :editMode="editorEditMode"
           :materialId="materialStore.currentMaterialId ?? undefined"
+          :auto-show-outline="store.isTutorialDoc"
           class="flex-1"
           @insert-to-chat="handleEditorInsertToChat"
           @delete-material="handleEditorDeleteMaterial"
@@ -2147,7 +2228,36 @@ async function handleExportWord() {
         @click.self="onClickAwayContextMenu"
         @contextmenu.prevent="onClickAwayContextMenu"
       >
+        <!-- 选中文字时：三功能菜单 -->
         <div
+          v-if="ctxMenu.type === 'text'"
+          class="absolute w-[200px] bg-white/95 dark:bg-gray-900/95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl dark:shadow-2xl py-1 backdrop-blur-md"
+          :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+        >
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            @click="handleSidebarAddToClip"
+          >
+            <span>📦 存入 AiPen 素材库</span>
+          </button>
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            @click="handleSidebarAddToChat"
+          >
+            <span>💬 添加到 AI 对话</span>
+          </button>
+          <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            @click="handleSidebarCopy"
+          >
+            <span>复制</span>
+            <span class="text-gray-400 dark:text-gray-500 text-[11px] ml-3">Ctrl+C</span>
+          </button>
+        </div>
+        <!-- 无选中文字时：系统菜单 -->
+        <div
+          v-else
           class="absolute w-32 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg shadow-xl py-1"
           :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
         >

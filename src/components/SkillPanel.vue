@@ -129,9 +129,9 @@ const categoryLabels: Record<string, string> = {
 
 const categoryColors: Record<string, string> = {
   correction: "text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/30",
-  polish: "text-yellow-600 dark:text-yellow-400 bg-yellow-950/30",
+  polish: "text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-950/30",
   creative: "text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-950/30",
-  custom: "text-blue-400 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/30",
+  custom: "text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-950/30",
 };
 
 const groupedSkills = computed(() => {
@@ -453,10 +453,10 @@ function renderMarkdown(text: string) {
     </div>
 
     <!-- 技能组合管道 -->
-    <div class="mb-3 border border-gray-700/40 rounded-lg bg-gray-100/30 dark:bg-gray-800/20">
+    <div class="mb-3 border border-gray-300/40 dark:border-gray-700/40 rounded-lg bg-gray-100/30 dark:bg-gray-800/20">
       <!-- 折叠头 -->
       <button
-        class="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-800/30 transition-colors"
+        class="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-200/50 dark:hover:bg-gray-800/30 transition-colors"
         @click="pipelineExpanded = !pipelineExpanded"
       >
         <span class="text-xs text-gray-700 dark:text-gray-300">

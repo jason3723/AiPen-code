@@ -78,7 +78,7 @@ defineExpose({ show });
             :class="{
               'text-red-600 dark:text-red-400': options.kind === 'danger',
               'text-amber-600 dark:text-amber-400': options.kind === 'warning',
-              'text-blue-400': options.kind === 'info' || !options.kind,
+              'text-blue-600 dark:text-blue-400': options.kind === 'info' || !options.kind,
             }"
           >
             {{ options.title }}

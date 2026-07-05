@@ -146,6 +146,7 @@ const props = defineProps<{
   readonly?: boolean
   editMode?: 'document' | 'material'
   materialId?: string
+  autoShowOutline?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: any] // ProseMirror JSON 或 纯文本字符串
@@ -313,28 +314,19 @@ function setFontSize(label: string) {
   editor.value?.chain().focus().setFontSize(entry.px + 'pt').run()
 }
 
-/** 选区字号增大一档 */
+/** 页面缩放：放大 5%（Ctrl+滚轮 / 工具栏按钮共用步长） */
 function zoomIn() {
-  const ed = editor.value
-  if (!ed) return
-  const curPx = getContextFontSizePt()
-  const sortedByPx = [...fontSizeMap].sort((a, b) => a.px - b.px)
-  const next = sortedByPx.find(f => f.px > curPx)
-  if (next) ed.chain().focus().setFontSize(next.px + 'pt').run()
+  pageZoom.value = Math.min(2.0, +(pageZoom.value + 0.05).toFixed(2))
 }
 
-/** 选区字号减小一档 */
+/** 页面缩放：缩小 5% */
 function zoomOut() {
-  const ed = editor.value
-  if (!ed) return
-  const curPx = getContextFontSizePt()
-  const sortedByPx = [...fontSizeMap].sort((a, b) => b.px - a.px)
-  const prev = sortedByPx.find(f => f.px < curPx)
-  if (prev) ed.chain().focus().setFontSize(prev.px + 'pt').run()
+  pageZoom.value = Math.max(0.5, +(pageZoom.value - 0.05).toFixed(2))
 }
 
 // ── 页面缩放（Ctrl+滚轮） ──
 const pageZoom = ref(1.0)
+const zoomPercent = computed(() => Math.round(pageZoom.value * 100))
 
 // ── 大纲面板 ──
 const showOutline = ref(false)
@@ -583,26 +575,28 @@ function clearSearchHighlights() {
 
 
 // ── 颜色（全部 computed，模板中只用 :style，杜绝 # 解析 bug） ──
-const tbBg = computed(() => isLight.value ? '#f8f9fa' : '#1e1e2e')
-const tbBorder = computed(() => isLight.value ? '#d9d9d9' : '#3b3b5c')
-const tbSep = computed(() => isLight.value ? '#d9d9d9' : '#3b3b5c')
-const btnText = computed(() => isLight.value ? '#4a4a5a' : '#a0a0c0')
-const btnHoverBg = computed(() => isLight.value ? '#e9ecef' : '#2a2b3d')
-const btnActiveBg = computed(() => isLight.value ? '#d0d5db' : 'rgba(59,130,246,0.2)')
-const btnActiveText = computed(() => isLight.value ? '#1a56db' : '#60a5fa')
-const ddBg = computed(() => isLight.value ? '#ffffff' : '#252540')
-const ddBorder = computed(() => isLight.value ? '#d9d9d9' : '#3b3b5c')
-const ddHoverBg = computed(() => isLight.value ? '#f3f4f6' : '#2a2b3d')
-const contentBg = computed(() => isLight.value ? '#ffffff' : '#1a1b26')
-const contentText = computed(() => isLight.value ? '#1a1a1a' : '#c0caf5')
+// 深色模式设计原则：工具栏为暗色"边框"框住内容区；内容区作为"画布"最亮；
+// 下拉面板介于两者之间，体现悬浮感；文字对比度充足，质感通透。
+const tbBg = computed(() => isLight.value ? '#f8f9fa' : '#14151d')
+const tbBorder = computed(() => isLight.value ? '#d9d9d9' : '#232533')
+const tbSep = computed(() => isLight.value ? '#d9d9d9' : '#232533')
+const btnText = computed(() => isLight.value ? '#4a4a5a' : '#888da0')
+const btnHoverBg = computed(() => isLight.value ? '#e9ecef' : '#1c1e2c')
+const btnActiveBg = computed(() => isLight.value ? '#d0d5db' : 'rgba(138,173,244,0.18)')
+const btnActiveText = computed(() => isLight.value ? '#1a56db' : '#89b4fa')
+const ddBg = computed(() => isLight.value ? '#ffffff' : '#1a1c29')
+const ddBorder = computed(() => isLight.value ? '#d9d9d9' : '#292c3c')
+const ddHoverBg = computed(() => isLight.value ? '#f3f4f6' : '#222537')
+const contentBg = computed(() => isLight.value ? '#ffffff' : '#1d2032')
+const contentText = computed(() => isLight.value ? '#1a1a1a' : '#cdd6f4')
 
 // ── 素材卡片主题色 ──
-const cardAccent = computed(() => isLight.value ? '#6366f1' : '#818cf8')
-const cardTitleBg = computed(() => isLight.value ? 'linear-gradient(135deg, rgba(99,102,241,0.07) 0%, rgba(99,102,241,0.02) 100%)' : 'linear-gradient(135deg, rgba(129,140,248,0.1) 0%, rgba(129,140,248,0.03) 100%)')
-const cardMetaColor = computed(() => isLight.value ? '#9ca3af' : '#565f89')
-const cardDivider = computed(() => isLight.value ? 'linear-gradient(90deg, transparent 0%, rgba(209,213,219,0.5) 30%, rgba(209,213,219,0.7) 50%, rgba(209,213,219,0.5) 70%, transparent 100%)' : 'linear-gradient(90deg, transparent 0%, rgba(59,59,92,0.5) 30%, rgba(59,59,92,0.7) 50%, rgba(59,59,92,0.5) 70%, transparent 100%)')
-const metaBg = computed(() => isLight.value ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)')
-const dropdownItemColor = computed(() => isLight.value ? '#1f2937' : '#c0c0e0')
+const cardAccent = computed(() => isLight.value ? '#6366f1' : '#89b4fa')
+const cardTitleBg = computed(() => isLight.value ? 'linear-gradient(135deg, rgba(99,102,241,0.07) 0%, rgba(99,102,241,0.02) 100%)' : 'linear-gradient(135deg, rgba(137,180,250,0.08) 0%, rgba(137,180,250,0.02) 100%)')
+const cardMetaColor = computed(() => isLight.value ? '#9ca3af' : '#696e88')
+const cardDivider = computed(() => isLight.value ? 'linear-gradient(90deg, transparent 0%, rgba(209,213,219,0.5) 30%, rgba(209,213,219,0.7) 50%, rgba(209,213,219,0.5) 70%, transparent 100%)' : 'linear-gradient(90deg, transparent 0%, rgba(41,44,60,0.5) 30%, rgba(41,44,60,0.7) 50%, rgba(41,44,60,0.5) 70%, transparent 100%)')
+const metaBg = computed(() => isLight.value ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.06)')
+const dropdownItemColor = computed(() => isLight.value ? '#1f2937' : '#bac2de')
 
 // ── 右键菜单状态 ──
 const ctxMenuShow = ref(false)
@@ -957,6 +951,11 @@ watch(() => props.readonly, (v) => {
   editor.value?.setEditable(!v)
 })
 
+// ── 教程文档自动展开大纲 ──
+watch(() => props.autoShowOutline, (v) => {
+  if (v) showOutline.value = true
+})
+
 // ── 清理 ──
 onBeforeUnmount(() => {
   editor.value?.destroy()
@@ -1195,8 +1194,8 @@ defineExpose({
     }
     syncing = false
   },
-  /** 设置 JSON 内容并在指定区间包裹高亮（用于 diff 逐操作回放） */
-  setContentWithHighlight: (json: any, hlStart: number, hlEnd: number) => {
+  /** 设置 JSON 内容并在指定区间包裹高亮。rawTextLen 可选，用于比例映射偏移。 */
+  setContentWithHighlight: (json: any, hlStart: number, hlEnd: number, rawTextLen?: number) => {
     const ed = editor.value
     if (!ed) return
     syncing = true
@@ -1204,10 +1203,17 @@ defineExpose({
       if (json && typeof json === 'object') {
         ed.commands.setContent(json)
       }
-      // 如果有有效的高亮区间，应用 diffHighlight mark
       if (hlStart >= 0 && hlEnd > hlStart) {
-        const docPosFrom = textOffsetToDocPos(ed, hlStart)
-        const docPosTo = textOffsetToDocPos(ed, hlEnd)
+        let oFrom = hlStart, oTo = hlEnd
+        if (rawTextLen && rawTextLen > 0) {
+          const pmLen = Math.max(1, ed.state.doc.textContent.length)
+          const s = pmLen / rawTextLen
+          oFrom = Math.max(0, Math.floor(hlStart * s))
+          oTo = Math.min(pmLen, Math.ceil(hlEnd * s))
+          if (oTo <= oFrom) oTo = oFrom + 1
+        }
+        const docPosFrom = textOffsetToDocPos(ed, oFrom)
+        const docPosTo = textOffsetToDocPos(ed, oTo)
         if (docPosFrom > 0 && docPosTo > docPosFrom) {
           ed.chain().setTextSelection({ from: docPosFrom, to: docPosTo }).setMark('diffHighlight').run()
         }
@@ -1259,6 +1265,8 @@ const svg = {
   toggleHeader: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/><rect x="5" y="5" width="2" height="2" fill="currentColor" stroke="none"/></svg>`,
   printer: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 12H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`,
   outline: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
+  minus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+  plus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
 }
 
 // ── 按钮辅助 ──
@@ -1274,13 +1282,18 @@ function btnClass(active: boolean) {
       class="rich-toolbar flex items-center gap-0.5 px-1.5 py-1 border-b shrink-0 flex-wrap select-none"
       :style="{ backgroundColor: tbBg, borderColor: tbBorder }"
     >
-      <!-- 撤销/重做 -->
+      <!-- ── 导航 ── -->
+      <button title="大纲导航" class="rich-btn" :class="{ 'rich-btn-active': showOutline }" @mousedown.prevent="showOutline = !showOutline" v-html="svg.outline" />
+
+      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
+
+      <!-- ── 编辑历史 ── -->
       <button title="撤销 Ctrl+Z" class="rich-btn" @mousedown.prevent="execUndo" v-html="svg.undo" />
       <button title="重做 Ctrl+Y" class="rich-btn" @mousedown.prevent="execRedo" v-html="svg.redo" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 文字格式 -->
+      <!-- ── 基础文字格式 ── -->
       <button title="粗体" :class="btnClass(active.bold)" @mousedown.prevent="execBold" v-html="svg.bold" />
       <button title="斜体" :class="btnClass(active.italic)" @mousedown.prevent="execItalic" v-html="svg.italic" />
       <button title="下划线" :class="btnClass(active.underline)" @mousedown.prevent="execUnderline" v-html="svg.underline" />
@@ -1288,13 +1301,10 @@ function btnClass(active: boolean) {
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 上标/下标 -->
+      <!-- ── 高级文字样式 ── -->
       <button title="上标" :class="btnClass(active.superscript)" @mousedown.prevent="execSuperscript" v-html="svg.superscript" />
       <button title="下标" :class="btnClass(active.subscript)" @mousedown.prevent="execSubscript" v-html="svg.subscript" />
 
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- 文字颜色 -->
       <div class="relative">
         <button
           title="文字颜色"
@@ -1329,21 +1339,12 @@ function btnClass(active: boolean) {
         <div v-if="colorPickerOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
       </div>
 
-      <!-- 高亮 -->
       <button title="高亮" :class="btnClass(active.highlight)" @mousedown.prevent="execHighlight" v-html="svg.highlighter" />
-
-      <!-- 清除格式 -->
       <button title="清除格式" class="rich-btn" @mousedown.prevent="execClearFormat" v-html="svg.clearFormat" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 缩进：左减少，右增加 -->
-      <button title="减少缩进" class="rich-btn" @mousedown.prevent="execOutdent" v-html="svg.outdent" />
-      <button title="增加缩进" class="rich-btn" @mousedown.prevent="execIndent" v-html="svg.indent" />
-
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- 样式预设（标题下拉 - Word 风格命名） -->
+      <!-- ── 段落样式 ── -->
       <div class="relative">
         <button
           class="rich-btn min-w-[64px] flex items-center gap-0.5"
@@ -1384,26 +1385,26 @@ function btnClass(active: boolean) {
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 对齐 -->
+      <!-- ── 段落排列 ── -->
       <button title="左对齐" :class="btnClass(active.alignLeft)" @mousedown.prevent="execAlign('left')" v-html="svg.alignLeft" />
       <button title="居中" :class="btnClass(active.alignCenter)" @mousedown.prevent="execAlign('center')" v-html="svg.alignCenter" />
       <button title="右对齐" :class="btnClass(active.alignRight)" @mousedown.prevent="execAlign('right')" v-html="svg.alignRight" />
       <button title="两端对齐" :class="btnClass(active.alignJustify)" @mousedown.prevent="execAlign('justify')" v-html="svg.alignJustify" />
 
+      <button title="减少缩进" class="rich-btn" @mousedown.prevent="execOutdent" v-html="svg.outdent" />
+      <button title="增加缩进" class="rich-btn" @mousedown.prevent="execIndent" v-html="svg.indent" />
+
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 列表 -->
+      <!-- ── 列表 ── -->
       <button title="无序列表" :class="btnClass(active.bullet)" @mousedown.prevent="execBullet" v-html="svg.bulletList" />
       <button title="有序列表" :class="btnClass(active.ordered)" @mousedown.prevent="execOrdered" v-html="svg.orderedList" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 分割线 -->
+      <!-- ── 插入元素 ── -->
       <button title="分割线" class="rich-btn" @mousedown.prevent="execHr" v-html="svg.hr" />
 
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- 插入表格（格选面板） -->
       <div class="relative">
         <button title="插入表格" class="rich-btn" @mousedown.prevent="openTablePicker" v-html="svg.table" />
         <div
@@ -1434,9 +1435,7 @@ function btnClass(active: boolean) {
         <div v-if="tablePickerOpen" class="fixed inset-0 z-40" @mousedown="closeTablePicker" />
       </div>
 
-      <!-- 表格操作（仅当光标在表格内时显示） -->
       <template v-if="isInTable">
-        <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
         <button title="上方插入行" class="rich-btn" @mousedown.prevent="execAddRowBefore" v-html="svg.addRowAbove" />
         <button title="下方插入行" class="rich-btn" @mousedown.prevent="execAddRowAfter" v-html="svg.addRowBelow" />
         <button title="左侧插入列" class="rich-btn" @mousedown.prevent="execAddColumnBefore" v-html="svg.addColumnLeft" />
@@ -1444,7 +1443,6 @@ function btnClass(active: boolean) {
         <button title="删除行" class="rich-btn" @mousedown.prevent="execDeleteRow" v-html="svg.deleteRow" />
         <button title="删除列" class="rich-btn" @mousedown.prevent="execDeleteColumn" v-html="svg.deleteColumn" />
         <button title="删除表格" class="rich-btn" @mousedown.prevent="execDeleteTable" v-html="svg.deleteTable" />
-        <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
         <button
           title="合并单元格（先 Ctrl+点击 选中多个单元格）"
           class="rich-btn"
@@ -1470,28 +1468,17 @@ function btnClass(active: boolean) {
         />
       </template>
 
-      <!-- 插入图片 -->
       <button title="插入图片" class="rich-btn" @mousedown.prevent="execImage" v-html="svg.image" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
-      <!-- 查找替换 -->
+      <!-- ── 文档工具 ── -->
       <button title="查找替换 Ctrl+F" class="rich-btn" :class="{ 'rich-btn-active': searchOpen }" @mousedown.prevent="toggleSearch" v-html="svg.search" />
-
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- 打印 -->
       <button title="打印文档" class="rich-btn" onclick="window.print()" v-html="svg.printer" />
 
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- 大纲导航 -->
-      <button title="大纲导航" class="rich-btn" :class="{ 'rich-btn-active': showOutline }" @mousedown.prevent="showOutline = !showOutline" v-html="svg.outline" />
-
-      <!-- 右侧：字体 / 大小 / 主题 -->
+      <!-- ── 右侧：字体 / 字号 ── -->
       <div class="flex-1" />
 
-      <!-- 字体选择 -->
       <div class="relative">
         <button
           class="rich-btn min-w-[100px] flex items-center gap-0.5 text-[11px]"
@@ -1519,8 +1506,7 @@ function btnClass(active: boolean) {
         <div v-if="fontDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
       </div>
 
-      <!-- 字号下拉 + A+ A- -->
-      <div class="relative flex items-center gap-0">
+      <div class="relative">
         <div class="relative">
           <button
             class="rich-btn min-w-[44px] flex items-center gap-0.5 text-[11px]"
@@ -1546,10 +1532,15 @@ function btnClass(active: boolean) {
             </div>
           </div>
         </div>
-        <div v-if="fontSizeDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
-        <button title="缩小字号" class="rich-btn text-xs" @mousedown.prevent="zoomOut">A⁻</button>
-        <button title="放大字号" class="rich-btn text-xs" @mousedown.prevent="zoomIn">A⁺</button>
       </div>
+      <div v-if="fontSizeDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
+
+      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
+
+      <!-- 页面缩放控制 -->
+      <button title="页面缩小 Ctrl+滚轮↓" class="rich-btn" @mousedown.prevent="zoomOut" v-html="svg.minus" />
+      <span class="text-[11px] font-medium tabular-nums select-none min-w-[34px] text-center" :style="{ color: btnText }">{{ zoomPercent }}%</span>
+      <button title="页面放大 Ctrl+滚轮↑" class="rich-btn" @mousedown.prevent="zoomIn" v-html="svg.plus" />
 
     </div>
 
@@ -1736,8 +1727,8 @@ function btnClass(active: boolean) {
   --ae-cell-sel-bg: rgba(59,130,246,0.18);
   --ae-cell-sel-outline: rgba(59,130,246,0.45);
   --ae-cell-sel-after: rgba(59,130,246,0.06);
-  --ae-diff-bg: linear-gradient(180deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.25) 100%);
-  --ae-diff-border: rgba(59,130,246,0.5);
+  --ae-diff-bg: linear-gradient(180deg, rgba(250,204,21,0.35) 0%, rgba(250,204,21,0.55) 100%);
+  --ae-diff-border: rgba(234,179,8,0.9);
   --ae-swatch-hover: 0 0 0 2px rgba(59,130,246,0.35);
   --ae-ctxmenu-danger: #ef4444;
   --ae-search-focus-border: #3b82f6;
@@ -1747,18 +1738,18 @@ function btnClass(active: boolean) {
   --ae-column-resize: rgba(59,130,246,0.4);
 }
 .dark {
-  --ae-placeholder: #6b7280;
-  --ae-blockquote-text: #9ca3af;
-  --ae-pre-bg: rgba(0,0,0,0.1);
-  --ae-code-bg: rgba(0,0,0,0.08);
-  --ae-img-shadow: 0 1px 4px rgba(0,0,0,0.08);
-  --ae-dropdown-shadow: 0 4px 16px rgba(0,0,0,0.3);
-  --ae-ctxmenu-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  --ae-ctxmenu-danger-hover: rgba(239,68,68,0.15);
-  --ae-swatch-border: rgba(0,0,0,0.12);
-  --ae-mark-bg: rgba(251,191,36,0.3);
-  --ae-search-bg: rgba(255,193,7,0.4);
-  --ae-search-shadow: 0 0 0 1px rgba(255,193,7,0.3);
+  --ae-placeholder: #555973;
+  --ae-blockquote-text: #a4abc0;
+  --ae-pre-bg: rgba(0,0,0,0.22);
+  --ae-code-bg: rgba(0,0,0,0.16);
+  --ae-img-shadow: 0 1px 6px rgba(0,0,0,0.25);
+  --ae-dropdown-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  --ae-ctxmenu-shadow: 0 12px 36px rgba(0,0,0,0.6);
+  --ae-ctxmenu-danger-hover: rgba(239,68,68,0.18);
+  --ae-swatch-border: rgba(255,255,255,0.06);
+  --ae-mark-bg: rgba(251,191,36,0.22);
+  --ae-search-bg: rgba(255,193,7,0.32);
+  --ae-search-shadow: 0 0 0 1px rgba(255,193,7,0.38);
 }
 
 /* ── 编辑器内容区 ── */
@@ -1777,9 +1768,9 @@ function btnClass(active: boolean) {
   cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='24' viewBox='0 0 20 24'><line x1='10' y1='2' x2='10' y2='22' stroke='white' stroke-width='3'/><line x1='10' y1='2' x2='10' y2='22' stroke='black' stroke-width='1.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='white' stroke-width='2.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='black' stroke-width='1.2'/><line x1='5' y1='22' x2='15' y2='22' stroke='white' stroke-width='2.5'/><line x1='5' y1='22' x2='15' y2='22' stroke='black' stroke-width='1.2'/></svg>") 10 12, text;
 }
 .dark .rich-content .ProseMirror {
-  caret-color: #c0caf5 !important;
+  caret-color: #cdd6f4 !important;
   /* 深色模式：白色竖线 + 黑色描边 */
-  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='24' viewBox='0 0 20 24'><line x1='10' y1='2' x2='10' y2='22' stroke='black' stroke-width='3'/><line x1='10' y1='2' x2='10' y2='22' stroke='white' stroke-width='1.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='black' stroke-width='2.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='white' stroke-width='1.2'/><line x1='5' y1='22' x2='15' y2='22' stroke='black' stroke-width='2.5'/><line x1='5' y1='22' x2='15' y2='22' stroke='white' stroke-width='1.2'/></svg>") 10 12, text;
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='24' viewBox='0 0 20 24'><line x1='10' y1='2' x2='10' y2='22' stroke='%2314151d' stroke-width='3'/><line x1='10' y1='2' x2='10' y2='22' stroke='%23cdd6f4' stroke-width='1.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='%2314151d' stroke-width='2.5'/><line x1='5' y1='2' x2='15' y2='2' stroke='%23cdd6f4' stroke-width='1.2'/><line x1='5' y1='22' x2='15' y2='22' stroke='%2314151d' stroke-width='2.5'/><line x1='5' y1='22' x2='15' y2='22' stroke='%23cdd6f4' stroke-width='1.2'/></svg>") 10 12, text;
 }
 .rich-content .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
@@ -1908,7 +1899,9 @@ function btnClass(active: boolean) {
   background: var(--ae-diff-bg);
   border-bottom: 2px solid var(--ae-diff-border);
   padding: 1px 2px;
-  border-radius: 2px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(234,179,8,0.35), 0 0 8px rgba(250,204,21,0.45);
+  transition: background 120ms ease-out;
 }
 /* 高亮内的 mark 保留原样式 */
 .rich-content .ProseMirror .diff-change-highlight mark {

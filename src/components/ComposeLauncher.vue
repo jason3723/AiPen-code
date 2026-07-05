@@ -277,21 +277,21 @@ const progressBgClass = computed(() => {
   const c = progressPhaseColor.value
   return {
     'bg-blue-100 dark:bg-blue-950/15': c === 'blue',
-    'bg-violet-950/15': c === 'violet',
-    'bg-emerald-950/15': c === 'emerald',
-    'bg-amber-950/15': c === 'amber',
+    'bg-violet-100 dark:bg-violet-950/15': c === 'violet',
+    'bg-emerald-100 dark:bg-emerald-950/15': c === 'emerald',
+    'bg-amber-100 dark:bg-amber-950/15': c === 'amber',
     'bg-purple-100 dark:bg-purple-950/15': c === 'purple',
     'bg-green-100 dark:bg-green-950/15': c === 'green',
-    'bg-gray-900/20': c === 'gray',
+    'bg-gray-100 dark:bg-gray-900/20': c === 'gray',
   }
 })
 
 const progressTrackClass = computed(() => {
   const c = progressPhaseColor.value
   return {
-    'bg-blue-100 dark:bg-blue-950/40': c === 'blue', 'bg-violet-950/40': c === 'violet',
-    'bg-emerald-950/40': c === 'emerald',
-    'bg-amber-950/40': c === 'amber', 'bg-purple-100 dark:bg-purple-950/40': c === 'purple',
+    'bg-blue-100 dark:bg-blue-950/40': c === 'blue', 'bg-violet-100 dark:bg-violet-950/40': c === 'violet',
+    'bg-emerald-100 dark:bg-emerald-950/40': c === 'emerald',
+    'bg-amber-100 dark:bg-amber-950/40': c === 'amber', 'bg-purple-100 dark:bg-purple-950/40': c === 'purple',
     'bg-green-100 dark:bg-green-950/40': c === 'green', 'bg-gray-100/70 dark:bg-gray-800/60': c === 'gray',
   }
 })
@@ -353,7 +353,7 @@ const progressHint = computed(() => {
     <div class="flex items-center justify-between mb-3">
       <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300">智能写作</h3>
       <button
-        class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        class="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
         @click="showForm = !showForm"
       >
         {{ showForm ? '取消' : '+ 自定义' }}
@@ -400,13 +400,13 @@ const progressHint = computed(() => {
     </Transition>
 
     <!-- ═══ 问题确认编辑面板 ═══ -->
-    <div v-if="showReviewPanel" class="mb-3 p-3 rounded-lg bg-gray-100/60 dark:bg-gray-800/50 border border-blue-700/40 space-y-2.5 max-h-[60vh] flex flex-col">
+    <div v-if="showReviewPanel" class="mb-3 p-3 rounded-lg bg-gray-100/60 dark:bg-gray-800/50 border border-blue-300 dark:border-blue-700/40 space-y-2.5 max-h-[60vh] flex flex-col">
       <!-- 标题 -->
       <div class="flex items-center justify-between shrink-0">
         <div class="flex items-center gap-1.5">
           <span class="text-xs">📋</span>
           <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">{{ pendingName }}</span>
-          <span class="text-[10px] px-1 py-0.5 rounded-full bg-blue-400/25 text-gray-800 dark:text-gray-200">确认修改</span>
+          <span class="text-[10px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-400/25 text-blue-700 dark:text-gray-200">确认修改</span>
         </div>
         <span class="text-[10px] text-gray-400 dark:text-gray-500">{{ pendingQuestions.length }} 个问题</span>
       </div>
@@ -427,7 +427,7 @@ const progressHint = computed(() => {
         <div
           v-for="(q, idx) in pendingQuestions"
           :key="idx"
-          class="p-2 rounded-lg bg-gray-900/60 border border-gray-700/30 space-y-1.5 group"
+          class="p-2 rounded-lg bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700/30 space-y-1.5 group"
         >
           <!-- 标题行 -->
           <div class="flex items-center gap-1.5">
@@ -436,14 +436,14 @@ const progressHint = computed(() => {
               v-model="q.question"
               type="text"
               placeholder="问题文本"
-              class="flex-1 bg-transparent text-[11px] text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 outline-none border-b border-transparent focus:border-gray-600 transition-colors"
+              class="flex-1 bg-transparent text-[11px] text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 outline-none border-b border-transparent focus:border-blue-400 dark:focus:border-gray-600 transition-colors"
             />
             <!-- required 切换 -->
             <button
               class="h-5 px-1.5 text-[9px] rounded border transition-all shrink-0"
               :class="q.required
                 ? 'bg-red-100 dark:bg-red-950/30 border-red-300 dark:border-red-800/50 text-red-600 dark:text-red-400'
-                : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-600 hover:text-gray-400'"
+                : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-600 hover:text-gray-700 dark:hover:text-gray-400'"
               @click="toggleRequired(idx)"
               :title="q.required ? '必填' : '选填'"
             >
@@ -462,14 +462,14 @@ const progressHint = computed(() => {
             v-model="q.hint"
             type="text"
             placeholder="输入框提示（可为空）"
-            class="w-full bg-white/80 dark:bg-gray-950/50 border border-gray-200 dark:border-gray-800 rounded px-1.5 py-1 text-[10px] text-gray-600 dark:text-gray-400 placeholder-gray-700 outline-none focus:border-gray-600 transition-colors"
+            class="w-full bg-white/80 dark:bg-gray-950/50 border border-gray-200 dark:border-gray-800 rounded px-1.5 py-1 text-[10px] text-gray-600 dark:text-gray-400 placeholder-gray-400 dark:placeholder-gray-700 outline-none focus:border-gray-600 transition-colors"
           />
           <!-- options（逗号分隔） -->
           <input
             v-model="q._optionsText"
             type="text"
             placeholder="选项（逗号分隔，如：选项A，选项B）"
-            class="w-full bg-white/80 dark:bg-gray-950/50 border border-gray-200 dark:border-gray-800 rounded px-1.5 py-1 text-[10px] text-amber-600 dark:text-amber-400/70 placeholder-gray-700 outline-none focus:border-amber-800/50 transition-colors"
+            class="w-full bg-white/80 dark:bg-gray-950/50 border border-gray-200 dark:border-gray-800 rounded px-1.5 py-1 text-[10px] text-amber-600 dark:text-amber-400/70 placeholder-gray-400 dark:placeholder-gray-700 outline-none focus:border-amber-800/50 transition-colors"
             @input="() => {}"
           />
         </div>
@@ -479,7 +479,7 @@ const progressHint = computed(() => {
       <div class="space-y-2 shrink-0">
         <!-- 添加问题 -->
         <button
-          class="w-full h-7 flex items-center justify-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 hover:text-blue-400 border border-dashed border-gray-300/50 dark:border-gray-700/50 hover:border-blue-700/50 rounded-lg transition-all"
+          class="w-full h-7 flex items-center justify-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300/50 dark:border-gray-700/50 hover:border-blue-300 dark:hover:border-blue-700/50 rounded-lg transition-all"
           @click="addQuestion"
         >
           <span>＋</span> 添加问题
@@ -488,7 +488,7 @@ const progressHint = computed(() => {
         <!-- 底部操作 -->
         <div class="flex items-center gap-2">
           <button
-            class="h-7 px-3 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-700/30 rounded-lg transition-colors shrink-0"
+            class="h-7 px-3 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700/30 rounded-lg transition-colors shrink-0"
             @click="handleCancelReview"
           >
             取消
@@ -568,7 +568,7 @@ const progressHint = computed(() => {
           <Transition name="expand-down">
             <div
               v-if="isActiveRecipe(recipe)"
-              class="px-3 pb-3 border-t border-gray-700/30 pt-2.5"
+              class="px-3 pb-3 border-t border-gray-200 dark:border-gray-700/30 pt-2.5"
               :class="isActiveRecipe(recipe) ? progressBgClass : ''"
             >
               <!-- 标题行 -->
@@ -607,7 +607,7 @@ const progressHint = computed(() => {
       <!-- 空状态 -->
       <div v-if="Object.keys(groupedRecipes).length === 0" class="text-center py-8 text-gray-500 dark:text-gray-600 text-xs">
         <p>暂无写作模板</p>
-        <p class="text-blue-500 dark:text-blue-400 cursor-pointer hover:underline mt-1" @click="showForm = true">
+        <p class="text-blue-500 cursor-pointer hover:underline mt-1" @click="showForm = true">
           创建第一个
         </p>
       </div>

@@ -619,12 +619,19 @@ function toggleOutlineConfig() {
 }
 
 async function generateOutline() {
+  // 先折叠配置区并禁用按钮
+  outlineConfigExpanded.value = false
   outlineGenerating.value = true
+  // 等 DOM 更新 + 配置区 expand 离场动画完成（0.3s），
+  // 再显示思考面板，避免两个面板在同一垂直空间重叠
+  await nextTick()
+  await new Promise(r => setTimeout(r, 350))
+
   outlineThinkingDone.value = false
   outlineThinking.value = ''
+  outlineThinkingReady.value = false
   outlineItems.value = []
   outlineThinkingExpanded.value = true
-  outlineConfigExpanded.value = false // 生成后自动折叠配置区
 
   const scopeAnswer = outlineStructure.value || ''
   const recipeName = state.recipe?.name || ''
@@ -968,8 +975,9 @@ async function confirmStartOutline() {
   dialogVisible.value = false
   state.phase = 'outline_generating'
   emitProgress()
-  showOutlineModal.value = true
+  // 先等旧对话框的 Teleport 完全卸载，再显示提纲弹窗，避免短暂的内容重叠
   await nextTick()
+  showOutlineModal.value = true
 }
 
 /** 跳过提纲阶段，直接进入正文撰写 */
@@ -1662,13 +1670,13 @@ defineExpose({ onPlaybackComplete })
       >
         <!-- 标题栏（紧凑） -->
         <header
-          class="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-gray-900/80 backdrop-blur-sm"
+          class="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-white/90 dark:bg-gray-900/80 backdrop-blur-sm"
         >
           <div class="flex items-center gap-1.5">
             <span class="text-sm">{{ state.recipe?.icon }}</span>
             <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">{{ state.recipe?.name }}</span>
             <span
-              class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-400 border border-blue-300 dark:border-blue-800/30"
+              class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-800/30"
             >
               {{ showSummary ? '信息确认' : showSupplementaryQuestion ? '补充说明' : phaseLabels[state.phase] }}
             </span>
@@ -1696,10 +1704,10 @@ defineExpose({ onPlaybackComplete })
               </div>
               <div class="flex-1">
                 <div
-                  class="bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 leading-relaxed border border-gray-700/30"
+                  class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 leading-relaxed border border-blue-200 dark:border-gray-700/30"
                 >
                   <p>
-                    好的，我来帮你撰写一篇<strong class="text-blue-400">{{ state.recipe?.name }}</strong
+                    好的，我来帮你撰写一篇<strong class="text-blue-600 dark:text-blue-400">{{ state.recipe?.name }}</strong
                     >。
                   </p>
                   <p class="mt-1.5 text-gray-600 dark:text-gray-400">我先了解一下关键信息，不清楚的地方我会自己判断。</p>
@@ -1719,7 +1727,7 @@ defineExpose({ onPlaybackComplete })
                 </div>
                 <div class="flex-1">
                   <div
-                    class="bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 border border-gray-700/30"
+                    class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 border border-blue-200 dark:border-gray-700/30"
                   >
                     {{ interviewStage?.questions[qi - 1]?.question }}
                   </div>
@@ -1746,7 +1754,7 @@ defineExpose({ onPlaybackComplete })
             </div>
             <div class="flex-1">
               <div
-                class="bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-blue-300 dark:border-blue-800/20"
+                class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-blue-300 dark:border-blue-800/20"
               >
                 <p class="mb-2.5">{{ currentQuestion.question }}</p>
                 <!-- 选项按钮 -->
@@ -1778,7 +1786,7 @@ defineExpose({ onPlaybackComplete })
             </div>
             <div class="flex-1">
               <div
-                class="bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-purple-800/20"
+                class="bg-purple-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-purple-300 dark:border-purple-800/20"
               >
                 <p>采访内容已经收集完毕。</p>
                 <p class="mt-1.5 text-purple-600 dark:text-purple-400 font-medium">📝 你还有什么补充说明吗？</p>
@@ -1803,7 +1811,7 @@ defineExpose({ onPlaybackComplete })
               </button>
               <div class="flex-1" />
               <button
-                class="h-7 px-4 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-700/30 border border-gray-300/50 dark:border-gray-700/50 rounded-lg transition-colors shrink-0"
+                class="h-7 px-4 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700/30 border border-gray-300/50 dark:border-gray-700/50 rounded-lg transition-colors shrink-0"
                 @click="handleSkip"
               >
                 跳过
@@ -1836,7 +1844,7 @@ defineExpose({ onPlaybackComplete })
             </div>
             <!-- 提示词编辑器 -->
             <Transition name="expand">
-              <div v-if="showPromptEditor" class="p-2 rounded-lg border border-purple-800/30 bg-purple-100 dark:bg-purple-950/10 space-y-1.5">
+              <div v-if="showPromptEditor" class="p-2 rounded-lg border border-purple-200 dark:border-purple-800/30 bg-purple-100 dark:bg-purple-950/10 space-y-1.5">
                 <div class="flex items-center gap-2">
                   <input v-model="editingPrompt.label" placeholder="快捷名称" class="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-[11px] text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 outline-none focus:border-purple-500" maxlength="20" />
                   <button class="h-6 px-2.5 text-[10px] bg-purple-600/80 hover:bg-purple-500/80 text-white rounded transition-all shrink-0" @click="savePrompt">保存</button>
@@ -1854,7 +1862,7 @@ defineExpose({ onPlaybackComplete })
               <button class="h-7 px-4 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs font-medium rounded-lg transition-all shadow-[0_0_8px_rgba(139,92,246,0.25)] hover:shadow-[0_0_12px_rgba(139,92,246,0.4)] active:scale-95" @click="submitSupplementary">
                 确认 →
               </button>
-              <button class="h-7 px-3 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-400 hover:bg-gray-700/30 rounded-lg transition-colors shrink-0" @click="skipSupplementary">
+              <button class="h-7 px-3 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700/30 rounded-lg transition-colors shrink-0" @click="skipSupplementary">
                 跳过
               </button>
             </div>
@@ -1993,11 +2001,11 @@ defineExpose({ onPlaybackComplete })
         class="relative w-full max-w-lg max-h-[85vh] rounded-xl shadow-2xl flex flex-col bg-gray-50 dark:bg-gray-900 border border-gray-300/50 dark:border-gray-700/50 overflow-hidden"
       >
         <!-- 标题栏 -->
-        <header class="flex items-center justify-between px-3 py-2.5 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-gray-900/80 backdrop-blur-sm">
+        <header class="flex items-center justify-between px-3 py-2.5 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-white/90 dark:bg-gray-900/80 backdrop-blur-sm">
           <div class="flex items-center gap-1.5">
             <span class="text-sm">{{ state.recipe?.icon }}</span>
             <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">{{ state.recipe?.name }}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 border border-purple-800/30">信息确认</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/30">信息确认</span>
           </div>
           <div class="flex items-center gap-2">
             <span class="text-[10px] text-gray-500 dark:text-gray-600 tabular-nums">{{ formatTime(state.elapsedSeconds) }}</span>
@@ -2010,13 +2018,13 @@ defineExpose({ onPlaybackComplete })
           <p class="text-[11px] text-gray-600 dark:text-gray-400">请确认以下信息：</p>
 
           <!-- 问答对 -->
-          <div v-for="(ea, i) in editableAnswers" :key="ea.id" class="p-2 rounded-lg bg-gray-100/60 dark:bg-gray-800/50 border border-gray-700/30 space-y-1">
-            <label class="text-[11px] text-blue-400 font-medium block">{{ i + 1 }}. {{ qaSummary[i]?.question || ea.id }}</label>
+          <div v-for="(ea, i) in editableAnswers" :key="ea.id" class="p-2 rounded-lg bg-gray-100/60 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/30 space-y-1">
+            <label class="text-[11px] text-blue-600 dark:text-blue-400 font-medium block">{{ i + 1 }}. {{ qaSummary[i]?.question || ea.id }}</label>
             <textarea v-model="ea.answer" rows="2" class="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1.5 text-xs text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 outline-none focus:border-blue-500 transition-colors resize-none" placeholder="输入答案..."></textarea>
           </div>
 
           <!-- 补充说明摘要 -->
-          <div class="p-2 rounded-lg bg-gray-100/50 dark:bg-gray-800/30 border border-dashed border-purple-800/30 space-y-1">
+          <div class="p-2 rounded-lg bg-gray-100/50 dark:bg-gray-800/30 border border-dashed border-purple-200 dark:border-purple-800/30 space-y-1">
             <label class="text-[11px] text-purple-600 dark:text-purple-400 font-medium block">📝 补充说明</label>
             <p class="text-[11px] text-gray-600 dark:text-gray-400 italic">{{ supplementaryText || '（无补充）' }}</p>
           </div>
@@ -2055,7 +2063,7 @@ defineExpose({ onPlaybackComplete })
         </div>
 
         <!-- 固定底部操作栏 -->
-        <div class="shrink-0 px-3 py-2.5 border-t border-gray-200/50 dark:border-gray-800/50 bg-gray-900/80 backdrop-blur-sm">
+        <div class="shrink-0 px-3 py-2.5 border-t border-gray-200/50 dark:border-gray-800/50 bg-gray-100/80 dark:bg-gray-900/80 backdrop-blur-sm">
           <div class="flex items-center gap-3">
             <!-- 左：返回修改（弱按钮） -->
             <button class="h-8 px-3 text-[11px] text-gray-400 dark:text-gray-500 hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-950/20 border border-gray-300/50 dark:border-gray-700/50 hover:border-blue-600/40 rounded-lg transition-all shrink-0" @click="goBackToQuestions">
@@ -2065,7 +2073,7 @@ defineExpose({ onPlaybackComplete })
             <div class="flex-1" />
             <!-- 右：直接生成正文（次要操作） -->
             <button
-              class="h-8 px-3 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-700/30 border border-gray-300/50 dark:border-gray-700/50 hover:border-gray-500 rounded-lg transition-all shrink-0"
+              class="h-8 px-3 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700/30 border border-gray-300/50 dark:border-gray-700/50 hover:border-gray-500 rounded-lg transition-all shrink-0"
               :disabled="loading"
               @click="confirmDirectGenerate"
             >
@@ -2087,26 +2095,26 @@ defineExpose({ onPlaybackComplete })
 
   <!-- ═══════ 生成提纲阶段：Teleport 弹窗 ═══════ -->
   <Teleport to="body">
-    <Transition name="fade-modal">
-      <div
-        v-if="showOutlineModal"
-        class="fixed inset-0 z-[10001] flex items-center justify-center"
-      >
-        <!-- 遮罩 -->
-        <div class="absolute inset-0 bg-black/70 backdrop-blur-md" />
+    <div
+      v-if="showOutlineModal"
+      class="fixed inset-0 z-[10001] flex items-center justify-center"
+    >
+      <!-- 遮罩：不参与 Transition，避免淡入过程闪烁 -->
+      <div class="absolute inset-0 bg-black/70 backdrop-blur-md" />
 
-        <!-- 弹窗主体（紧凑） -->
+      <!-- 弹窗主体（紧凑） -->
+      <Transition name="fade-modal">
         <div
-          class="relative w-full max-w-2xl max-h-[84vh] rounded-xl shadow-2xl flex flex-col bg-gray-50 dark:bg-gray-900 border border-purple-800/30 overflow-hidden"
+          class="relative w-full max-w-2xl max-h-[84vh] rounded-xl shadow-2xl flex flex-col bg-gray-50 dark:bg-gray-900 border border-purple-200 dark:border-purple-800/30 overflow-hidden"
         >
           <!-- 标题栏（紧凑） -->
           <header
-            class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-gray-900/80 backdrop-blur-sm"
-          >
-            <div class="flex items-center gap-1.5">
-              <span class="text-lg">📋</span>
-              <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">生成提纲</span>
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 border border-purple-800/40 breathing-text">思考中</span>
+          class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 shrink-0 bg-white/90 dark:bg-gray-900/80 backdrop-blur-sm"
+        >
+          <div class="flex items-center gap-1.5">
+            <span class="text-lg">📋</span>
+            <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">生成提纲</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 breathing-text">思考中</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-[10px] text-gray-500 dark:text-gray-600 tabular-nums">{{ formatTime(state.elapsedSeconds) }}</span>
@@ -2144,12 +2152,12 @@ defineExpose({ onPlaybackComplete })
                   <!-- 二级标题风格 --><div class="mb-3">
                     <div class="flex items-center gap-2 mb-1.5">
                       <label class="text-xs font-semibold text-purple-600 dark:text-purple-400">二级标题</label>
-                      <button class="text-[11px] text-orange-600 dark:text-orange-400 hover:text-orange-300 px-1.5 py-0.5 rounded hover:bg-orange-950/20 transition-colors" @click="randomizeStyle(true)" title="随机选一种">🎲</button>
+                      <button class="text-[11px] text-orange-600 dark:text-orange-400 hover:text-orange-300 px-1.5 py-0.5 rounded hover:bg-orange-100 dark:hover:bg-orange-950/20 transition-colors" @click="randomizeStyle(true)" title="随机选一种">🎲</button>
                       <button
                         v-for="opt in specialStyleOptions" :key="'l2s_' + opt.value"
                         class="text-[11px] px-2 py-0.5 rounded border transition-all duration-200"
                         :class="outlineL2Style === opt.value
-                          ? opt.value === '随机类型' ? 'border-orange-500/50 bg-orange-50/30 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 shadow-[0_0_6px_rgba(249,115,22,0.15)]' : 'border-gray-400/50 bg-gray-700/30 text-gray-700 dark:text-gray-300 shadow-[0_0_6px_rgba(156,163,175,0.15)]'
+                          ? opt.value === '随机类型' ? 'border-orange-500/50 bg-orange-50/30 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 shadow-[0_0_6px_rgba(249,115,22,0.15)]' : 'border-gray-400/50 bg-gray-200 dark:bg-gray-700/30 text-gray-700 dark:text-gray-300 shadow-[0_0_6px_rgba(156,163,175,0.15)]'
                           : 'border-gray-300/50 dark:border-gray-700/50 bg-gray-100/50 dark:bg-gray-800/30 text-gray-400 dark:text-gray-500 hover:border-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
                         @click="outlineL2Style = opt.value"
                       >{{ opt.icon }} {{ opt.label }}</button>
@@ -2173,12 +2181,12 @@ defineExpose({ onPlaybackComplete })
                   <!-- 三级标题风格 --><div>
                     <div class="flex items-center gap-2 mb-1.5">
                       <label class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">三级标题</label>
-                      <button class="text-[11px] text-orange-600 dark:text-orange-400 hover:text-orange-300 px-1.5 py-0.5 rounded hover:bg-orange-950/20 transition-colors" @click="randomizeStyle(false)" title="随机选一种">🎲</button>
+                      <button class="text-[11px] text-orange-600 dark:text-orange-400 hover:text-orange-300 px-1.5 py-0.5 rounded hover:bg-orange-100 dark:hover:bg-orange-950/20 transition-colors" @click="randomizeStyle(false)" title="随机选一种">🎲</button>
                       <button
                         v-for="opt in specialStyleOptions" :key="'l3s_' + opt.value"
                         class="text-[11px] px-2 py-0.5 rounded border transition-all duration-200"
                         :class="outlineL3Style === opt.value
-                          ? opt.value === '随机类型' ? 'border-orange-500/50 bg-orange-50/30 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 shadow-[0_0_6px_rgba(249,115,22,0.15)]' : 'border-gray-400/50 bg-gray-700/30 text-gray-700 dark:text-gray-300 shadow-[0_0_6px_rgba(156,163,175,0.15)]'
+                          ? opt.value === '随机类型' ? 'border-orange-500/50 bg-orange-50/30 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 shadow-[0_0_6px_rgba(249,115,22,0.15)]' : 'border-gray-400/50 bg-gray-200 dark:bg-gray-700/30 text-gray-700 dark:text-gray-300 shadow-[0_0_6px_rgba(156,163,175,0.15)]'
                           : 'border-gray-300/50 dark:border-gray-700/50 bg-gray-100/50 dark:bg-gray-800/30 text-gray-400 dark:text-gray-500 hover:border-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
                         @click="outlineL3Style = opt.value"
                       >{{ opt.icon }} {{ opt.label }}</button>
@@ -2191,7 +2199,7 @@ defineExpose({ onPlaybackComplete })
                           :key="'l3_' + hs.value"
                           class="px-1.5 py-0.5 rounded border text-[11px] leading-tight transition-all duration-200"
                           :class="outlineL3Style === hs.value
-                            ? 'border-emerald-300 dark:border-emerald-500/60 bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.15)]'
+                            ? 'border-emerald-300 dark:border-emerald-500/60 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.15)]'
                             : 'border-gray-300/50 dark:border-gray-700/50 bg-gray-100/50 dark:bg-gray-800/30 text-gray-400 dark:text-gray-500 hover:border-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
                           @click="outlineL3Style = hs.value"
                         >{{ hs.label }}</button>
@@ -2220,12 +2228,12 @@ defineExpose({ onPlaybackComplete })
 
             <!-- ═══ 思考过程 ═══ -->
             <Transition name="expand">
-              <div v-if="outlineThinking" class="rounded-lg border overflow-hidden" :class="outlineThinkingDone ? 'border-purple-800/30 bg-purple-100 dark:bg-purple-950/10' : 'border-blue-300 dark:border-blue-800/30 bg-blue-100 dark:bg-blue-950/10'">
-                <button v-if="outlineThinkingDone" class="w-full flex items-center justify-between px-3 py-2 hover:bg-purple-950/20 transition-colors" @click="outlineThinkingExpanded = !outlineThinkingExpanded">
+              <div v-if="outlineThinking" class="rounded-lg border overflow-hidden" :class="outlineThinkingDone ? 'border-purple-200 dark:border-purple-800/30 bg-purple-100 dark:bg-purple-950/10' : 'border-blue-300 dark:border-blue-800/30 bg-blue-100 dark:bg-blue-950/10'">
+                <button v-if="outlineThinkingDone" class="w-full flex items-center justify-between px-3 py-2 hover:bg-purple-200/50 dark:hover:bg-purple-950/20 transition-colors" @click="outlineThinkingExpanded = !outlineThinkingExpanded">
                   <div class="flex items-center gap-1.5">
                     <span class="text-xs">🧠</span>
                     <span class="text-[11px] font-semibold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">AI 思考过程</span>
-                    <span class="text-[10px] text-purple-600/70 dark:text-purple-400/70 bg-purple-100 dark:bg-purple-950/40 px-1 py-0.5 rounded-full border border-purple-800/30">{{ outlineThinkingExpanded ? '收起' : '查看' }}</span>
+                    <span class="text-[10px] text-purple-600/70 dark:text-purple-400/70 bg-purple-100 dark:bg-purple-950/40 px-1 py-0.5 rounded-full border border-purple-200 dark:border-purple-800/30">{{ outlineThinkingExpanded ? '收起' : '查看' }}</span>
                   </div>
                   <span class="text-[10px] text-purple-600 dark:text-purple-400 transition-transform" :class="outlineThinkingExpanded ? 'rotate-180' : ''">▼</span>
                 </button>
@@ -2239,28 +2247,17 @@ defineExpose({ onPlaybackComplete })
               </div>
             </Transition>
 
-            <!-- ═══ 提纲条目生成中（思考已完成，等待条目出现） ═══ -->
-            <div
-              v-if="outlineThinkingReady && !outlineThinkingDone && outlineItems.length === 0 && outlineGenerating"
-              class="flex items-center justify-center gap-2 py-3"
-            >
-              <svg class="animate-spin w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
-              <span class="text-[11px] text-purple-400/70 animate-pulse">正在生成提纲条目…</span>
-            </div>
 
             <!-- ═══ 提纲条目（可内联编辑） ═══ -->
             <div v-if="outlineItems.length > 0" class="space-y-1.5">
               <template v-for="item in outlineItems" :key="item.id">
                 <div
                   class="rounded-lg border overflow-hidden transition-all duration-300"
-                  :class="item.level === 2 ? 'border-purple-800/30 bg-purple-100 dark:bg-purple-950/10' : 'border-emerald-800/20 bg-emerald-950/5 ml-5'"
+                  :class="item.level === 2 ? 'border-purple-200 dark:border-purple-800/30 bg-purple-100 dark:bg-purple-950/10' : 'border-emerald-200 dark:border-emerald-800/20 bg-emerald-50 dark:bg-emerald-950/5 ml-5'"
                 >
                   <div class="flex items-start gap-2 px-3 py-2">
                     <span class="shrink-0 w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold mt-px select-none"
-                      :class="item.level === 2 ? 'bg-purple-50/50 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400 border border-purple-700/30' : 'bg-emerald-50/50 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 border border-emerald-700/30'"
+                      :class="item.level === 2 ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-700/30' : 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-700/30'"
                     >{{ item.level === 2 ? 'H2' : 'H3' }}</span>
 
                     <!-- 内联编辑 / 显示切换 -->
@@ -2301,7 +2298,7 @@ defineExpose({ onPlaybackComplete })
                 </div>
               </template>
               <!-- 添加大标题 -->
-              <button class="w-full h-8 flex items-center justify-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 hover:text-purple-400 border border-dashed border-gray-300/50 dark:border-gray-700/50 hover:border-purple-700/50 rounded-lg transition-all" @click="addOutlineItem(2)">
+              <button class="w-full h-8 flex items-center justify-center gap-1 text-[11px] text-gray-400 dark:text-gray-500 hover:text-purple-400 border border-dashed border-gray-300/50 dark:border-gray-700/50 hover:border-purple-300 dark:hover:border-purple-700/50 rounded-lg transition-all" @click="addOutlineItem(2)">
                 <span>＋</span> 添加大标题
               </button>
             </div>
@@ -2329,8 +2326,8 @@ defineExpose({ onPlaybackComplete })
             <div class="text-[11px] text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900/30 rounded-lg px-3 py-1.5">{{ error }} <button class="ml-2 underline hover:text-red-600 dark:hover:text-red-300" @click="error = ''">关闭</button></div>
           </div>
         </div>
-      </div>
     </Transition>
+  </div>
   </Teleport>
 </template>
 

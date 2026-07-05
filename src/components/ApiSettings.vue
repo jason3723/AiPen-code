@@ -279,9 +279,15 @@ async function handleCheckUpdate() {
     }
   } catch (err) {
     const msg = String(err);
-    updateError.value = msg.includes("network") || msg.includes("fetch") || msg.includes("connect")
-      ? "网络连接异常，请检查网络后重试"
-      : `检查更新失败: ${msg}`;
+    if (msg.includes("network") || msg.includes("fetch") || msg.includes("connect")) {
+      updateError.value = "网络连接异常，请检查网络后重试";
+    } else if (msg.includes("decode") || msg.includes("decoding")) {
+      updateError.value = "更新文件解析失败，latest.json 可能是 Release 附件而非仓库文件，请将其提交到仓库根目录";
+    } else if (msg.includes("404") || msg.includes("not found")) {
+      updateError.value = "未找到更新配置文件（latest.json），请确认该文件已推送到 GitHub 仓库 main 分支根目录";
+    } else {
+      updateError.value = `检查更新失败: ${msg}`;
+    }
     updateState.phase = "error";
     updateState.errorMessage = updateError.value;
   } finally {
@@ -675,22 +681,22 @@ const appVersion = pkg.version;
           <div class="px-5 py-3 space-y-3 text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
             <!-- DeepSeek 密钥申请 -->
             <section>
-              <h3 class="text-sm font-semibold text-blue-400 mb-2">如何申请 DeepSeek API 密钥</h3>
+              <h3 class="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-2">如何申请 DeepSeek API 密钥</h3>
               <ol class="list-decimal list-inside space-y-1 ml-1">
-                <li>访问 DeepSeek 开放平台：<a href="https://platform.deepseek.com" target="_blank" class="text-blue-400 hover:text-blue-300 underline">platform.deepseek.com</a></li>
+                <li>访问 DeepSeek 开放平台：<a href="https://platform.deepseek.com" target="_blank" class="text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 underline">platform.deepseek.com</a></li>
                 <li>注册/登录账号（支持手机号或邮箱注册）</li>
                 <li>完成<b>实名认证</b>（设置 → 实名认证，按提示提交身份信息）</li>
                 <li>完成<b>账户充值</b>（设置 → 充值，最低可充少量金额）</li>
                 <li>进入控制台，点击左侧菜单「API Keys」</li>
                 <li>点击「创建 API Key」，输入名称后点击创建</li>
                 <li>复制生成的密钥（格式为 <code class="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-700 dark:text-gray-300">sk-xxxxxxxxxxxxxxxx</code>）</li>
-                <li class="text-yellow-800/80 dark:text-yellow-400/80">⚠ 密钥仅显示一次，请妥善保管！</li>
+                <li class="text-yellow-700/80 dark:text-yellow-400/80">⚠ 密钥仅显示一次，请妥善保管！</li>
               </ol>
             </section>
 
             <!-- 如何填写 -->
             <section>
-              <h3 class="text-sm font-semibold text-blue-400 mb-2">如何填写设置</h3>
+              <h3 class="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-2">如何填写设置</h3>
               <ul class="space-y-1.5 ml-1">
                 <li>
                   <span class="font-medium text-gray-800 dark:text-gray-200">API 密钥：</span>
@@ -705,7 +711,7 @@ const appVersion = pkg.version;
 
             <!-- 思考模式说明 -->
             <section>
-              <h3 class="text-sm font-semibold text-blue-400 mb-2">思考模式与强度</h3>
+              <h3 class="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-2">思考模式与强度</h3>
               <ul class="space-y-1.5 ml-1">
                 <li>
                   <span class="font-medium text-gray-800 dark:text-gray-200">思考模式：</span>

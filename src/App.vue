@@ -69,10 +69,15 @@ async function startupCheck() {
       }
       return;
     } catch (err) {
+      const msg = String(err);
       const isLastAttempt = attempt >= MAX_RETRIES;
       if (isLastAttempt) {
         updateState.phase = "error";
-        updateState.errorMessage = "无法连接更新服务器，请检查网络后重试";
+        updateState.errorMessage = msg.includes("404") 
+          ? "未找到更新配置（latest.json），请确认该文件已推送到仓库 main 分支根目录"
+          : msg.includes("decode") || msg.includes("decoding")
+            ? "更新文件解析失败，latest.json 可能是 Release 附件而非仓库文件，请将其提交到仓库根目录"
+            : `无法连接更新服务器，请检查网络后重试（${attempt > 1 ? `已重试${attempt}次` : ""}）`;
         updateState.gaveUp = true;
         return;
       }
@@ -175,7 +180,7 @@ onMounted(() => {
           </div>
 
           <!-- 错误 -->
-          <div v-if="updateError" class="text-xs text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900/30 rounded-lg px-3 py-2 break-all">
+          <div v-if="updateError" class="text-xs text-red-400 bg-red-950/30 border border-red-900/30 rounded-lg px-3 py-2 break-all">
             {{ updateError }}
           </div>
         </div>

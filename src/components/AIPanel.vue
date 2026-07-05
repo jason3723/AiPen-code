@@ -187,7 +187,7 @@ function priorityClass(priority: string): string {
               <span class="text-indigo-600 dark:text-indigo-400 font-medium">站位评价：</span>{{ analysisResult.ideological_analysis.positioning }}
             </div>
             <div>
-              <span class="text-indigo-400 font-medium">深度视野：</span>{{ analysisResult.ideological_analysis.depth }}
+              <span class="text-indigo-600 dark:text-indigo-400 font-medium">深度视野：</span>{{ analysisResult.ideological_analysis.depth }}
             </div>
             <div v-if="analysisResult.ideological_analysis.risk !== '无'" class="flex items-start gap-1 text-yellow-700 dark:text-yellow-300">
               <svg class="w-3 h-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -246,7 +246,7 @@ function priorityClass(priority: string): string {
 
         <!-- ── 表达分析 ── -->
         <div v-if="(analysisResult.expression_analysis.highlights?.length || analysisResult.expression_analysis.issues?.length)" class="space-y-2">
-          <div class="flex items-center gap-1.5 text-xs font-semibold text-rose-300">
+          <div class="flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-300">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
             </svg>
@@ -273,7 +273,7 @@ function priorityClass(priority: string): string {
             修改分类
           </div>
           <div class="space-y-1.5">
-            <div v-for="(mod, i) in analysisResult.modification_breakdown" :key="'mb'+i" class="bg-gray-900/60 rounded-lg border border-gray-200 dark:border-gray-800 px-2.5 py-2 space-y-1">
+            <div v-for="(mod, i) in analysisResult.modification_breakdown" :key="'mb'+i" class="bg-gray-100 dark:bg-gray-900/60 rounded-lg border border-gray-200 dark:border-gray-800 px-2.5 py-2 space-y-1">
               <div class="flex items-start gap-1.5">
                 <span
                   class="text-[10px] px-1 py-0 rounded font-medium flex-shrink-0 mt-0.5"

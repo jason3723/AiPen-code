@@ -2,7 +2,14 @@ import { defineStore } from "pinia";
 import { ref, computed, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { textToDocJson } from "../utils/textToDocJson";
+import { markdownToDocJson } from "../utils/markdownToDocJson";
 import { useExportSettingsStore } from "./exportSettings";
+import tutorialMd from "../assets/tutorial.md?raw";
+import pkg from "../../package.json";
+
+// ── 教程文档常量 ──
+export const TUTORIAL_TITLE = "📖 AiPen 使用手册";
+const LS_VERSION_KEY = "aipen_last_version";
 
 
 // ─── 类型定义 ────────────────────────────────────────────────
@@ -169,6 +176,18 @@ export const useDocumentStore = defineStore("document", () => {
   const currentContent = ref<any>({ type: "doc", content: [] });
   const draftLoaded = ref(false); // 标记草稿是否已从数据库恢复
 
+  /** 是否为教程文档 */
+  const isTutorialDoc = computed(() => currentTitle.value === TUTORIAL_TITLE);
+
+  /** 教程 ProseMirror JSON 缓存（懒加载，仅首次启动时转换一次） */
+  let _tutorialJson: any = null;
+  function getTutorialDocJson(): any {
+    if (!_tutorialJson) {
+      _tutorialJson = markdownToDocJson(tutorialMd);
+    }
+    return _tutorialJson;
+  }
+
   // ── 文件夹状态 ──
   const folders = ref<Folder[]>([]);
   const currentFolderFilter = ref<string>("all"); // "all" | folder_id
@@ -313,6 +332,39 @@ export const useDocumentStore = defineStore("document", () => {
 
   // ── 操作 ──
 
+  /** 安装/升级新版本后首次启动时创建教程文档（不会切换过去，静默创建） */
+  async function createTutorialDocument() {
+    try {
+      // 仅在新版本安装后首次启动时尝试创建
+      const lastVersion = localStorage.getItem(LS_VERSION_KEY);
+      if (lastVersion === pkg.version) return;
+
+      const docs = await invoke<Document[]>("list_documents");
+      // 已有教程文档 → 跳过
+      if (docs.some((d: Document) => d.title === TUTORIAL_TITLE)) {
+        localStorage.setItem(LS_VERSION_KEY, pkg.version);
+        return;
+      }
+
+      const doc = await invoke<Document>("create_document", {
+        title: TUTORIAL_TITLE,
+      });
+      documents.value.unshift(doc);
+
+      // 将教程内容保存为草稿
+      const tutorialJson = getTutorialDocJson();
+      await invoke("save_draft", {
+        docId: doc.id,
+        content: JSON.stringify(tutorialJson),
+      });
+
+      localStorage.setItem(LS_VERSION_KEY, pkg.version);
+    } catch (err) {
+      // 教程创建失败不影响正常使用
+      console.error("创建教程文档失败:", err);
+    }
+  }
+
   /** 初始化：列出已有文档或创建新文档 */
   async function initDocument() {
     loading.value.init = true;
@@ -324,11 +376,13 @@ export const useDocumentStore = defineStore("document", () => {
 
       if (docs.length > 0) {
         documents.value = docs;
-        // 自动加载最近更新的文档
-        const latest = documents.value[0];
-        await switchDocument(latest.id);
+        // 新版本首次启动时静默插入教程文档
+        await createTutorialDocument();
+        // 始终加载用户原本的最新文档
+        await switchDocument(docs[0].id);
       } else {
-        // 创建第一个文档
+        // 首次启动：创建教程文档 + 普通文档
+        await createTutorialDocument();
         await createNewDocument();
       }
     } catch (err) {
@@ -792,6 +846,7 @@ export const useDocumentStore = defineStore("document", () => {
     canDiff,
     viewingVersionLabel,
     isViewingHistory,
+    isTutorialDoc,
     // 操作
     initDocument,
     reloadDocuments,
