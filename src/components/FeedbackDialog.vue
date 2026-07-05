@@ -132,9 +132,10 @@ function close() {
 
         <!-- 底部说明 -->
         <div
-          class="px-5 py-3 border-t border-gray-200 dark:border-gray-800 shrink-0 rounded-b-xl text-center text-xs text-gray-400 dark:text-gray-600"
+          class="px-5 py-3 border-t border-gray-200 dark:border-gray-800 shrink-0 rounded-b-xl space-y-1.5 text-center text-xs text-gray-400 dark:text-gray-600"
         >
-          反馈将通过安全通道提交，不会收集个人信息
+          <p>大庆油田第七采油厂 | 陈刚 18088793359</p>
+          <p>反馈将通过安全通道提交，不会收集个人信息</p>
         </div>
       </div>
     </div>

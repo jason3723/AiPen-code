@@ -1,10 +1,10 @@
 {
-  "version": "3.0.2",
+  "version": "3.0.3",
   "pub_date": "2026-07-05T02:33:00Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkIvOXZXV3R5R2RxckhnVTJCWGNEaERrcDRaTm1rNjUzVXZGWU5xekF4VVRjNkpqWE56TWlxd3FuUGpxVllyRWhuVldKOTcvWnJ6ZDBkTHVLR25obkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjE4Nzg4CWZpbGU6QWlQZW5fMy4wLjJfeDY0LXNldHVwLmV4ZQpTaDFpbE05ZDdLQ3V3d212cnk4eS9QWHJkd3FIR1hBNWpmYU40RlBTb2ZlK1VhV2JweDBiSUx3R0Fzb2FjSmFaWVo4STg0K2ZrMmFVK2hnaU54dEpCUT09Cg==",
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_3.0.2_x64-setup.exe"
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_3.0.3_x64-setup.exe"
     }
   },
   "notes": "📖 添加使用手册\n• 首次启动自动创建「📖 AiPen 使用手册」文档，覆盖全部功能说明\n\n🔧 优化其他细节\n• 多项 UI 交互与稳定性改进"

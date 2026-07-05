@@ -105,7 +105,7 @@ const ctxMenu = ref<{ show: boolean; x: number; y: number; type: 'system' | 'tex
 function smartMenuPos(cursorX: number, cursorY: number, menuW: number, menuH: number) {
   const MARGIN = 8;
   const HEADER_H = 48;   // .h-12 顶部工具栏
-  const FOOTER_H = 28;   // .h-7  底部状态栏
+  const FOOTER_H = 24;   // .h-6  底部状态栏
 
   // 各方向可用空间
   const spaceRight  = window.innerWidth - cursorX - MARGIN;
@@ -1348,7 +1348,7 @@ async function handleExportWord() {
           <span class="opacity-70">{{ scoreTagline(documentScore.total_score) }}</span>
         </button>
         <button
-          class="h-5 w-5 flex items-center justify-center rounded-full text-[10px] transition-colors"
+          class="h-5 w-5 flex items-center justify-center rounded-full text-[10px]"
           :class="scoreLoading ? 'text-gray-400 dark:text-gray-500 animate-spin' : 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'"
           :disabled="scoreLoading"
           title="重新评分"
@@ -1359,7 +1359,7 @@ async function handleExportWord() {
       </div>
       <button
         v-else-if="currentContent"
-        class="flex items-center gap-0.5 ml-3 px-2 py-0.5 rounded-full border border-gray-300 dark:border-gray-700 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-500 transition-colors cursor-pointer no-drag"
+        class="flex items-center gap-0.5 ml-3 px-2 py-0.5 rounded-full border border-gray-300 dark:border-gray-700 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-500 cursor-pointer no-drag"
         :disabled="scoreLoading"
         title="AI 综合评分"
         @click="handleScoreDocument"
@@ -1371,7 +1371,7 @@ async function handleExportWord() {
       <div class="flex items-center gap-2">
         <!-- 导出 Word -->
         <button
-          class="h-7 px-3 bg-green-700 hover:bg-green-600 text-white text-xs rounded transition-colors no-drag"
+          class="h-7 px-3 bg-green-700 dark:bg-green-500/20 dark:text-green-300 hover:bg-green-600 dark:hover:bg-green-500/30 text-white text-xs rounded no-drag"
           :disabled="!currentContent"
           title="导出为 Word 文档"
           @click="handleExportWord"
@@ -1380,7 +1380,7 @@ async function handleExportWord() {
         </button>
         <!-- 导出设置 -->
         <button
-          class="h-7 px-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded transition-colors no-drag"
+          class="h-7 px-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs rounded no-drag"
           title="导出 Word 排版设置"
           @click="showExportSettings = true"
         >
@@ -1395,7 +1395,7 @@ async function handleExportWord() {
           @keyup.enter="handleCommit"
         />
         <button
-          class="h-7 px-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded transition-colors no-drag"
+          class="h-7 px-3 bg-blue-600 dark:bg-blue-500/20 dark:text-blue-300 hover:bg-blue-500 dark:hover:bg-blue-500/30 disabled:opacity-50 text-white text-xs rounded no-drag"
           :disabled="loading.commit"
           @click="handleCommit"
         >
@@ -1406,21 +1406,21 @@ async function handleExportWord() {
         <!-- 窗口控制按钮组 -->
         <div class="flex items-center bg-gray-100/90 dark:bg-gray-800/80 rounded-md border border-gray-300/50 dark:border-gray-700/50 p-0.5 gap-1.5 h-7 no-drag">
           <button
-            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-300/60 dark:hover:bg-gray-600/50 rounded transition-colors"
+            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-300/60 dark:hover:bg-gray-600/50 rounded"
             title="最小化"
             @click="handleMinimize"
           >
             <svg class="w-3 h-3" viewBox="0 0 12 12"><rect x="1" y="5.5" width="10" height="1" fill="currentColor"/></svg>
           </button>
           <button
-            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-300/60 dark:hover:bg-gray-600/50 rounded transition-colors"
+            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-300/60 dark:hover:bg-gray-600/50 rounded"
             title="最大化"
             @click="handleMaximize"
           >
             <svg class="w-3 h-3" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>
           </button>
           <button
-            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
+            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded"
             title="关闭"
             @click="handleClose"
           >
@@ -1445,7 +1445,7 @@ async function handleExportWord() {
         </span>
       </div>
       <button
-        class="h-7 px-3 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded transition-colors font-medium"
+        class="h-7 px-3 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded font-medium"
         title="回到最新编辑草稿"
         @click="store.exitHistoryView()"
       >
@@ -1454,11 +1454,27 @@ async function handleExportWord() {
     </div>
 
     <!-- 主内容区：左文档列表 + 编辑器 + 右侧面板 -->
-    <div class="flex flex-1 min-h-0">
-      <!-- 左侧文档列表 / 素材 / 浏览器 -->
+    <div class="flex flex-1 min-h-0 relative">
+      <!-- 左侧悬浮折叠按钮 -->
+      <button
+        v-show="!leftCollapsed"
+        class="absolute left-[12.95rem] top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        title="折叠文档列表"
+        @click="leftCollapsed = true"
+      >
+        <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+      <button
+        v-show="leftCollapsed"
+        class="absolute left-0.5 top-1/2 -translate-y-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        title="展开文档列表"
+        @click="leftCollapsed = false"
+      >
+        <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </button>
       <aside
         class="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 transition-[width] duration-200"
-        :class="leftCollapsed ? 'w-0 overflow-hidden border-r-0' : 'w-48'"
+        :class="leftCollapsed ? 'w-0 overflow-hidden border-r-0' : 'w-52'"
         @contextmenu="onSidebarContextMenu"
       >
         <!-- Sub-Tab 切换 -->
@@ -1470,7 +1486,7 @@ async function handleExportWord() {
               { key: 'browser' as const, label: '浏览器' },
             ]"
             :key="tab.key"
-            class="flex-1 py-1.5 text-[11px] font-medium transition-colors"
+            class="flex-1 py-1.5 text-[11px] font-medium"
             :class="
               leftSubTab === tab.key
                 ? 'text-blue-400 border-b-2 border-blue-500'
@@ -1489,7 +1505,7 @@ async function handleExportWord() {
             <!-- 左：文件夹筛选下拉 -->
             <button
               ref="folderFilterBtnRef"
-              class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center gap-1"
+              class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
               @click="showFolderFilterDropdown = !showFolderFilterDropdown"
             >
               {{ currentFolderFilter === 'all' ? '全部' : (folders.find(f => f.id === currentFolderFilter)?.name || '全部') }}
@@ -1507,14 +1523,14 @@ async function handleExportWord() {
                   :style="folderFilterDropdownStyle"
                 >
                     <div
-                      class="px-3 py-1.5 text-xs cursor-pointer transition-colors"
+                      class="px-3 py-1.5 text-xs cursor-pointer"
                       :class="currentFolderFilter === 'all' ? 'text-blue-400 bg-blue-100 dark:bg-blue-900/20' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'"
                       @click.stop="store.setFolderFilter('all'); showFolderFilterDropdown = false"
                     >全部文档</div>
                     <div class="h-px bg-gray-100 dark:bg-gray-800 mx-2 my-1" v-if="folders.length > 0" />
                     <template v-for="f in folders" :key="f.id">
                       <div
-                        class="flex items-center justify-between px-3 py-1.5 text-xs cursor-pointer transition-colors group"
+                        class="flex items-center justify-between px-3 py-1.5 text-xs cursor-pointer group"
                         :class="currentFolderFilter === f.id ? 'text-blue-400 bg-blue-100 dark:bg-blue-900/20' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'"
                         @click.stop="store.setFolderFilter(f.id); showFolderFilterDropdown = false"
                       >
@@ -1534,7 +1550,7 @@ async function handleExportWord() {
               </Teleport>
             <!-- 右：新建按钮 -->
             <button
-              class="text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400 transition-colors"
+              class="text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400"
               title="新建文档"
               @click="handleNewDocument"
             >+ 新建</button>
@@ -1543,7 +1559,7 @@ async function handleExportWord() {
             <div
               v-for="doc in filteredDocuments"
               :key="doc.id"
-              class="group flex items-center gap-1 px-2 py-2 cursor-pointer transition-colors"
+              class="group flex items-center gap-1 px-2 py-2 cursor-pointer"
               :class="
                 doc.id === store.currentDocId
                   ? 'bg-blue-100 dark:bg-blue-900/30 border-l-2 border-blue-500 text-blue-700 dark:text-blue-300'
@@ -1575,17 +1591,17 @@ async function handleExportWord() {
               <!-- 操作按钮：编辑 | 移动 | 删除 -->
               <div class="hidden group-hover:flex items-center gap-0.5 shrink-0">
                 <button
-                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-yellow-600 dark:hover:text-yellow-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-yellow-600 dark:hover:text-yellow-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
                   title="重命名"
                   @click.stop="startRenameDialog(doc)"
                 >✎</button>
                 <button
-                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
                   title="移动到文件夹"
                   @click.stop="openMoveDocModal(doc)"
                 >↗</button>
                 <button
-                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                  class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
                   title="删除"
                   @click.stop="confirmDelete(doc)"
                 >✕</button>
@@ -1621,7 +1637,7 @@ async function handleExportWord() {
               <div class="px-4 py-3 space-y-2 max-h-[50vh] overflow-y-auto">
                 <!-- 未分类 -->
                 <div
-                  class="px-3 py-2 rounded text-xs cursor-pointer transition-colors"
+                  class="px-3 py-2 rounded text-xs cursor-pointer"
                   :class="moveDocSelectedFolderId === '__uncategorized' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'"
                   @click="moveDocSelectedFolderId = '__uncategorized'"
                 >未分类</div>
@@ -1629,7 +1645,7 @@ async function handleExportWord() {
                 <div
                   v-for="f in folders"
                   :key="f.id"
-                  class="px-3 py-2 rounded text-xs cursor-pointer transition-colors"
+                  class="px-3 py-2 rounded text-xs cursor-pointer"
                   :class="moveDocSelectedFolderId === f.id ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200'"
                   @click="moveDocSelectedFolderId = f.id"
                 >
@@ -1648,9 +1664,9 @@ async function handleExportWord() {
                 </div>
               </div>
               <div class="px-4 py-2.5 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-2">
-                <button class="h-7 px-3 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded transition-colors" @click="showMoveDocModal = false">取消</button>
+                <button class="h-7 px-3 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded" @click="showMoveDocModal = false">取消</button>
                 <button
-                  class="h-7 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors disabled:opacity-50"
+                  class="h-7 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded disabled:opacity-50"
                   :disabled="!moveDocSelectedFolderId && !moveDocNewFolderName.trim()"
                   @click="handleMoveDoc"
                 >确定</button>
@@ -1669,17 +1685,6 @@ async function handleExportWord() {
           @update="handleMaterialPanelUpdate"
         />
       </aside>
-
-      <!-- 左侧折叠按钮 -->
-      <button
-        class="w-5 flex items-center justify-center bg-gray-100/50 dark:bg-gray-800/30 hover:bg-gray-200/60 dark:hover:bg-gray-700/50 border-r border-gray-200 dark:border-gray-800 shrink-0 transition-colors cursor-pointer group"
-        :title="leftCollapsed ? '展开文档列表' : '折叠文档列表'"
-        @click="leftCollapsed = !leftCollapsed"
-      >
-        <span class="text-gray-400 dark:text-gray-500 group-hover:text-gray-700 dark:hover:text-gray-300 text-xs transition-colors">
-          {{ leftCollapsed ? '▶' : '◀' }}
-        </span>
-      </button>
 
       <!-- 中间：编辑器 + 写作进度条 -->
       <main ref="mainAreaRef" class="flex-1 min-w-0 min-h-0 flex flex-col" :class="{ 'editor-contained': isResizing }">
@@ -1737,7 +1742,7 @@ async function handleExportWord() {
               {{ composeProgress?.currentStep || 0 }}/{{ composeProgress?.totalSteps || 0 }}
             </span>
             <button
-              class="h-7 px-3 text-xs text-red-600 dark:text-red-400/70 bg-red-100 dark:bg-red-950/20 border border-red-300 dark:border-red-900/30 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:border-red-800/50 rounded transition-colors"
+              class="h-7 px-3 text-xs text-red-600 dark:text-red-400/70 bg-red-100 dark:bg-red-950/20 border border-red-300 dark:border-red-900/30 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:border-red-800/50 rounded"
               @click="handleRequestClose"
             >
               结束创作
@@ -1752,7 +1757,7 @@ async function handleExportWord() {
             <!-- 导航按钮 -->
             <div class="flex items-center gap-1 shrink-0 ml-1.5">
               <button
-                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded transition-colors"
+                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded"
                 title="后退"
                 @click="handleBrowserBack"
               >
@@ -1761,7 +1766,7 @@ async function handleExportWord() {
                 </svg>
               </button>
               <button
-                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded transition-colors"
+                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded"
                 title="前进"
                 @click="handleBrowserForward"
               >
@@ -1770,7 +1775,7 @@ async function handleExportWord() {
                 </svg>
               </button>
               <button
-                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded transition-colors"
+                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100/60 dark:hover:bg-gray-800/50 rounded"
                 title="刷新"
                 @click="handleBrowserRefresh"
               >
@@ -1790,14 +1795,14 @@ async function handleExportWord() {
             <!-- 右侧按钮组：Go + 关闭 -->
             <div class="flex items-center gap-2 shrink-0 mr-1.5">
               <button
-                class="h-7 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors shrink-0"
+                class="h-7 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded shrink-0"
                 @click="handleAddressBarNavigate"
               >
                 前往
               </button>
               <button
                 v-if="browserOpen"
-                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors shrink-0"
+                class="h-7 w-7 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded shrink-0"
                 title="关闭浏览器（释放资源）"
                 @click="handleBrowserDestroy"
               >
@@ -1845,15 +1850,22 @@ async function handleExportWord() {
         />
       </main>
 
-      <!-- 右侧折叠按钮 -->
+      <!-- 右侧悬浮折叠按钮 -->
       <button
-        class="w-5 flex items-center justify-center bg-gray-100/50 dark:bg-gray-800/30 hover:bg-gray-200/60 dark:hover:bg-gray-700/50 border-l border-gray-200 dark:border-gray-800 shrink-0 transition-colors cursor-pointer group"
-        :title="rightCollapsed ? '展开工具面板' : '折叠工具面板'"
-        @click="rightCollapsed = !rightCollapsed"
+        v-show="!rightCollapsed"
+        class="absolute right-[19.95rem] top-1/2 -translate-y-1/2 translate-x-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        title="折叠工具面板"
+        @click="rightCollapsed = true"
       >
-        <span class="text-gray-400 dark:text-gray-500 group-hover:text-gray-700 dark:hover:text-gray-300 text-xs transition-colors">
-          {{ rightCollapsed ? '◀' : '▶' }}
-        </span>
+        <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </button>
+      <button
+        v-show="rightCollapsed"
+        class="absolute right-0.5 top-1/2 -translate-y-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        title="展开工具面板"
+        @click="rightCollapsed = false"
+      >
+        <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
       </button>
 
       <!-- 右侧：面板区 -->
@@ -1876,7 +1888,7 @@ async function handleExportWord() {
               { key: 'settings', label: '设置' },
             ]"
             :key="tab.key"
-            class="flex-1 py-1.5 text-[11px] font-medium transition-colors"
+            class="flex-1 py-1.5 text-[11px] font-medium"
             :class="
               sidebarTab === tab.key
                 ? 'text-blue-400 border-b-2 border-blue-500'
@@ -1931,7 +1943,7 @@ async function handleExportWord() {
     </div>
 
     <!-- 状态栏 -->
-    <footer data-tauri-drag-region class="flex items-center px-4 h-7 border-t border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 drag-region">
+    <footer data-tauri-drag-region class="flex items-center px-4 h-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 drag-region">
       <div class="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-600 no-drag">
         <span v-if="editMode === 'document' && currentContent">
           字数: {{ typeof currentContent === 'object' && currentContent.content ? currentContent.content.reduce(
@@ -1945,72 +1957,60 @@ async function handleExportWord() {
         </span>
         <template v-if="editMode === 'document' && !isViewingHistory">
           <span v-if="draftSaveStatus === 'pending'" class="text-yellow-700 dark:text-yellow-500">● 检测到变更…</span>
-          <span v-else-if="draftSaveStatus === 'saving'" class="text-blue-400">● 正在保存…</span>
+          <span v-else-if="draftSaveStatus === 'saving'" class="text-blue-400 dark:text-blue-300">● 正在保存…</span>
           <span v-else-if="draftSaveStatus === 'saved'" class="text-green-600 dark:text-green-400">● 草稿已自动保存{{ lastSaveTime ? `（${lastSaveTime}）` : '' }}</span>
-          <span v-else-if="draftSaveStatus === 'error'" class="text-red-500">● 保存失败</span>
+          <span v-else-if="draftSaveStatus === 'error'" class="text-red-500 dark:text-red-400">● 保存失败</span>
           <span v-else-if="draftSaveStatus === 'idle' && lastSaveTime" class="text-gray-400 dark:text-gray-500">草稿已保存（{{ lastSaveTime }}）</span>
         </template>
       </div>
       <!-- 中间拖拽区域 -->
       <div class="flex-1 h-full" />
-      <div class="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-600 no-drag">
+      <div class="flex items-center gap-1.5 text-[11px] no-drag">
         <span v-if="loading.init" class="text-blue-400 dark:text-blue-300">初始化中...</span>
-        <!-- AI 状态 -->
-        <span
-          class="inline-flex items-center px-1.5 py-px rounded font-medium text-gray-500 dark:text-gray-400"
-          :class="apiConfig.model.includes('pro') ? 'bg-blue-400/25' : 'bg-gray-200 dark:bg-gray-800/60'"
-        >
-          {{ modelLabel }}
-        </span>
-        <span
-          class="inline-flex items-center px-1.5 py-px rounded font-medium text-gray-500 dark:text-gray-400"
-          :class="apiConfig.thinking_enabled ? 'bg-emerald-400/25' : 'bg-gray-200 dark:bg-gray-800/60'"
-        >
-          {{ thinkingLabel }}
-        </span>
-        <span
-          v-if="apiConfig.thinking_enabled"
-          class="inline-flex items-center px-1.5 py-px rounded font-medium text-gray-500 dark:text-gray-400"
-          :class="apiConfig.reasoning_effort === 'max' ? 'bg-blue-400/25' : 'bg-gray-200 dark:bg-gray-800/60'"
-        >
-          {{ effortLabel }}
-        </span>
-        <!-- 深浅主题切换 -->
-        <span
-          :title="isDark ? '切换浅色主题' : '切换深色主题'"
-          class="inline-flex items-center px-1.5 py-px rounded font-medium transition-colors cursor-pointer select-none no-drag bg-gray-200 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-700"
-          @click="toggleTheme"
-        >
-          <svg v-if="isDark" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-          </svg>
-          <svg v-else class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"/>
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-        </span>
-        <!-- 问号图标 -->
+        <!-- AI 状态：纯文字，用颜色区分激活态 -->
+        <span class="font-medium select-none" :class="apiConfig.model.includes('pro') ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'">{{ modelLabel }}</span>
+        <span class="font-medium select-none" :class="apiConfig.thinking_enabled ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'">{{ thinkingLabel }}</span>
+        <span v-if="apiConfig.thinking_enabled" class="font-medium select-none text-blue-500 dark:text-blue-400">{{ effortLabel }}</span>
+        <span class="text-gray-300 dark:text-gray-700 select-none">·</span>
+        <!-- 教程 -->
         <button
           title="工具使用教程"
-          class="ml-1 text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex-shrink-0 leading-none no-drag"
+          class="inline-flex items-center px-0.5 py-0.5 rounded text-sky-400 dark:text-sky-300 hover:text-sky-500 dark:hover:text-sky-200 hover:bg-sky-50 dark:hover:bg-sky-500/10"
           @click="showTutorial = true"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="11" fill="currentColor" fill-opacity="0.12" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M12 17h.01" />
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
           </svg>
         </button>
-        <!-- 反馈按钮 -->
+        <!-- 反馈 -->
         <button
           title="意见反馈"
-          class="ml-1 text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex-shrink-0 leading-none no-drag"
+          class="inline-flex items-center px-0.5 py-0.5 rounded text-emerald-400 dark:text-emerald-300 hover:text-emerald-500 dark:hover:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
           @click="showFeedback = true"
         >
-          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/>
           </svg>
         </button>
-        <span class="text-gray-500 dark:text-gray-400">大庆油田 | 陈刚 18088793359</span>
+        <!-- 主题滑动开关 -->
+        <button
+          :title="isDark ? '切换浅色主题' : '切换深色主题'"
+          class="relative inline-flex items-center w-8 h-4 rounded-full duration-200 focus:outline-none cursor-pointer"
+          :class="isDark ? 'bg-blue-500/50' : 'bg-gray-300 dark:bg-gray-600'"
+          @click="toggleTheme"
+        >
+          <!-- 浅色: 太阳图标 -->
+          <svg class="absolute left-0.5 w-2.5 h-2.5 transition-opacity duration-200" :class="isDark ? 'opacity-40' : 'opacity-0'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="4"/>
+            <path stroke-linecap="round" d="M12 2v1M12 21v1M4.93 4.93l.7.7M18.36 18.36l.7.7M2 12h1M21 12h1M4.93 19.07l.7-.7M18.36 5.64l.7-.7"/>
+          </svg>
+          <!-- 滑块圆点 -->
+          <span class="absolute w-3 h-3 bg-white rounded-full shadow-sm transition-transform duration-200" :class="isDark ? 'translate-x-4' : 'translate-x-0.5'" />
+          <!-- 深色: 月亮图标 -->
+          <svg class="absolute right-0.5 w-2.5 h-2.5 transition-opacity duration-200" :class="isDark ? 'opacity-0' : 'opacity-40'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+          </svg>
+        </button>
       </div>
     </footer>
 
@@ -2040,7 +2040,7 @@ async function handleExportWord() {
           <div class="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 dark:border-gray-800 shrink-0 rounded-t-xl">
             <h2 class="text-base font-semibold">📖 AiPen 使用教程</h2>
             <button
-              class="h-7 w-7 flex items-center justify-center rounded text-lg leading-none text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              class="h-7 w-7 flex items-center justify-center rounded text-lg leading-none text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
               @click="showTutorial = false"
             >✕</button>
           </div>
@@ -2291,7 +2291,7 @@ async function handleExportWord() {
             </div>
             <div class="flex items-center gap-1">
               <button
-                class="h-6 w-6 flex items-center justify-center rounded text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                class="h-6 w-6 flex items-center justify-center rounded text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="{ 'animate-spin': scoreLoading }"
                 :disabled="scoreLoading"
                 title="刷新评分"
@@ -2300,7 +2300,7 @@ async function handleExportWord() {
                 {{ scoreLoading ? '⏳' : '↻' }}
               </button>
               <button
-                class="h-6 w-6 flex items-center justify-center rounded text-sm text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                class="h-6 w-6 flex items-center justify-center rounded text-sm text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
                 @click="scorePopoverShow = false"
               >✕</button>
             </div>
@@ -2365,20 +2365,20 @@ async function handleExportWord() {
           :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
         >
           <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
             @click="handleSidebarAddToClip"
           >
             <span>📦 存入 AiPen 素材库</span>
           </button>
           <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
             @click="handleSidebarAddToChat"
           >
             <span>💬 添加到 AI 对话</span>
           </button>
           <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
           <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-between"
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
             @click="handleSidebarCopy"
           >
             <span>复制</span>
@@ -2392,14 +2392,14 @@ async function handleExportWord() {
           :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
         >
           <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 transition-colors flex items-center gap-2"
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 flex items-center gap-2"
             @click="handleReload"
           >
             <span>🔄</span> 刷新
           </button>
           <div class="h-px bg-gray-100 dark:bg-gray-800 mx-2 my-1" />
           <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 transition-colors flex items-center gap-2"
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 flex items-center gap-2"
             @click="handleShowAbout"
           >
             <span>ℹ️</span> 关于软件
@@ -2449,7 +2449,7 @@ async function handleExportWord() {
           </div>
           <!-- 关闭按钮 -->
           <button
-            class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-gray-100/70 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 transition-colors no-drag"
+            class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-gray-100/70 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 no-drag"
             @click="showAbout = false"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

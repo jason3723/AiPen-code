@@ -633,6 +633,20 @@ const ctxMenuSelText = ref('')
 const ctxMenuSelFrom = ref(0)
 const ctxMenuSelTo = ref(0)
 
+/** 智能四向翻转定位：菜单永不出界 */
+function editorSmartMenuPos(cursorX: number, cursorY: number, menuW: number, menuH: number) {
+  const MARGIN = 8
+  const spaceRight  = window.innerWidth - cursorX - MARGIN
+  const spaceBottom = window.innerHeight - cursorY - MARGIN
+  const x = spaceRight >= menuW
+    ? cursorX
+    : Math.max(MARGIN, cursorX - menuW)
+  const y = spaceBottom >= menuH
+    ? cursorY
+    : Math.max(MARGIN, cursorY - menuH)
+  return { x, y }
+}
+
 function closeCtxMenu() { ctxMenuShow.value = false }
 
 function execCtxMenuCut() {
@@ -927,11 +941,17 @@ const editor = useEditor({
         const ed = editor.value
         if (!ed) return false
         const { from, to } = ed.state.selection
-        ctxMenuSelText.value = ed.state.doc.textBetween(from, to, ' ')
+        const selText = ed.state.doc.textBetween(from, to, ' ')
+        ctxMenuSelText.value = selText
         ctxMenuSelFrom.value = from
         ctxMenuSelTo.value = to
-        ctxMenuX.value = event.clientX
-        ctxMenuY.value = event.clientY
+        // 根据菜单内容估算尺寸
+        const isDoc = !props.editMode || props.editMode === 'document'
+        const hasText = !!selText
+        let menuH = isDoc ? (hasText ? 160 : 105) : (hasText ? 170 : 70)
+        const { x, y } = editorSmartMenuPos(event.clientX, event.clientY, 200, menuH)
+        ctxMenuX.value = x
+        ctxMenuY.value = y
         ctxMenuShow.value = true
         return true
       },
