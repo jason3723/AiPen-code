@@ -1,7 +1,7 @@
 # AiPen — AI 辅助公文写作桌面应用
 
 <p align="center">
-  <img src="public/WJH.png" alt="AiPen 截图" width="720" />
+  <img src="icon.png" alt="AiPen LOGO" width="256" />
 </p>
 
 <p align="center">
