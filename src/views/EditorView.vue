@@ -25,6 +25,7 @@ import { computeDiff } from "../utils/diff";
 import { textToDocJson } from "../utils/textToDocJson";
 import MaterialPanel from "../components/MaterialPanel.vue";
 import MaterialClipDialog from "../components/MaterialClipDialog.vue";
+import FeedbackDialog from "../components/FeedbackDialog.vue";
 import { useTheme } from "../stores/theme";
 
 const { confirm } = useConfirm();
@@ -89,6 +90,13 @@ const titleInput = ref("");
 // ── 侧栏折叠 ──
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(false);
+
+// ── 全屏过渡遮罩 ──
+const overlayVisible = ref(false);
+const overlayText = ref("");
+
+// ── 窗口缩放中标记：阻止 resize/focus 事件干扰过渡动画 ──
+const isResizing = ref(false);
 
 // ── 侧栏右键菜单 ──
 const ctxMenu = ref<{ show: boolean; x: number; y: number; type: 'system' | 'text'; selectedText?: string }>({ show: false, x: 0, y: 0, type: 'system' });
@@ -163,6 +171,7 @@ function handleShowAbout() {
 }
 const aboutCanvasRef = ref<HTMLCanvasElement | null>(null);
 let _aboutAnimId = 0;
+let _starfieldResizeHandler: (() => void) | null = null;
 
 function startStarfield(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d")!;
@@ -173,6 +182,7 @@ function startStarfield(canvas: HTMLCanvasElement) {
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
   }
+  _starfieldResizeHandler = resize;
   resize();
   window.addEventListener("resize", resize);
 
@@ -230,7 +240,10 @@ function startStarfield(canvas: HTMLCanvasElement) {
 
 function stopStarfield() {
   if (_aboutAnimId) cancelAnimationFrame(_aboutAnimId);
-  window.removeEventListener("resize", () => {});
+  if (_starfieldResizeHandler) {
+    window.removeEventListener("resize", _starfieldResizeHandler);
+    _starfieldResizeHandler = null;
+  }
 }
 
 watch(showAbout, (v) => {
@@ -556,13 +569,17 @@ watch(isDark, async (dark) => {
   }
 });
 
-// 浏览器打开时，窗口大小变化 → 重新定位 webview
+// 浏览器打开时，窗口大小变化 → 重新定位 webview（节流 + 缩放中跳过）
+let _browserResizeTimer: ReturnType<typeof setTimeout> | null = null;
 function onBrowserResize() {
-  if (!browserOpen.value) return;
-  const vp = getBrowserViewportRect();
-  if (!vp) return;
-  // 通过 invoke 通知后端同步重定位
-  invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
+  if (!browserOpen.value || isResizing.value) return;
+  if (_browserResizeTimer) return; // 已经在队列中，跳过
+  _browserResizeTimer = setTimeout(() => {
+    _browserResizeTimer = null;
+    const vp = getBrowserViewportRect();
+    if (!vp) return;
+    invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
+  }, 150);
 }
 
 // ── 评分弹窗 ──
@@ -914,6 +931,7 @@ function delay(ms: number): Promise<void> {
 // ── 导出设置弹窗 ──
 const showExportSettings = ref(false);
 const showTutorial = ref(false);
+const showFeedback = ref(false);
 
 // ── 窗口关闭拦截 ──
 let closeRequestUnlisten: (() => void) | null = null;
@@ -973,6 +991,8 @@ onMounted(async () => {
   //   - 主窗口失焦 → 仅在最小化时隐藏（用户点击浏览器窗口导致的失焦由 Rust 端处理）
   // always_on_top 的浏览器窗口不会自动跟随主窗口隐藏/最小化，必须手动同步。
   focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
+    // 缩放过渡期间跳过，防止 show_browser / hide_browser 引发额外闪烁
+    if (isResizing.value) return;
     if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
       try {
         if (focused) {
@@ -1027,11 +1047,103 @@ async function handleMinimize() {
 async function handleMaximize() {
   const win = getCurrentWindow();
   const isMax = await win.isMaximized();
+
+  // 标记缩放中，防止 resize/focus 事件干扰
+  isResizing.value = true;
+  overlayText.value = isMax ? "还原窗口" : "最大化窗口";
+  overlayVisible.value = true;
+  await nextTick();
+  await new Promise((r) => requestAnimationFrame(r));
+
   if (isMax) {
     await win.unmaximize();
   } else {
     await win.maximize();
   }
+
+  // 等窗口稳定
+  await sleep(400);
+
+  // ★ 遮罩下：解冻布局 → 强制合成器提交最终帧（解决鼠标移入闪屏）
+  await flushCompositorFrame();
+
+  overlayVisible.value = false;
+}
+
+async function handleToggleFullscreen() {
+  const win = getCurrentWindow();
+  const isFullscreen = await win.isMaximized();
+
+  isResizing.value = true;
+  overlayText.value = isFullscreen ? "退出沉浸模式" : "进入沉浸模式";
+  overlayVisible.value = true;
+  await nextTick();
+  await new Promise((r) => requestAnimationFrame(r));
+
+  if (isFullscreen) {
+    await win.unmaximize();
+    await sleep(200);
+    leftCollapsed.value = false;
+    rightCollapsed.value = false;
+  } else {
+    leftCollapsed.value = true;
+    rightCollapsed.value = true;
+    await sleep(250);
+    await win.maximize();
+  }
+
+  // 等面板展开/折叠 + 窗口稳定
+  await sleep(400);
+
+  // ★ 遮罩下：解冻布局 → 强制合成器提交最终帧（解决鼠标移入闪屏）
+  await flushCompositorFrame();
+
+  overlayVisible.value = false;
+}
+
+/**
+ * 强制 WebView2 合成器在遮罩下提交一帧完整画面。
+ * 
+ * 背景：窗口 resize 后如果鼠标不在界面上，WebView2 合
+ * 成器会"休眠"，帧缓存保持脏状态。之后鼠标移入时合成器
+ * 醒来、提交第一帧脏帧 → 下一帧修正 → 产生剧烈闪屏。
+ * 
+ * 此处通过三个步骤强制提交干净帧：
+ * 1. 解除 CSS contain → ProseMirror 立即触发最终布局
+ * 2. 级联同步回流（offsetHeight → offsetWidth → getClientRects）
+ * 3. 微小 opacity 变动欺骗合成器（0→1 只隔一帧，肉眼不可见）
+ */
+async function flushCompositorFrame() {
+  // 1. 解除 editor-contained → ProseMirror ResizeObserver 即刻触发完整重排
+  isResizing.value = false;
+  await nextTick();
+
+  // 2. 级联强制同步回流：从文档根一路穿透到编辑器内层
+  void document.documentElement.offsetHeight;
+  void document.body.offsetHeight;
+  const mainEl = mainAreaRef.value;
+  if (mainEl) {
+    void mainEl.offsetHeight;
+    const ec = mainEl.querySelector('.rich-content');
+    if (ec) {
+      void (ec as HTMLElement).offsetHeight;
+      void (ec as HTMLElement).offsetWidth;
+      // getClientRects 是最高级别的强制回流——必须完成完整 layout tree + paint tree
+      void (ec as HTMLElement).getClientRects();
+    }
+  }
+
+  // 3. 欺骗合成器：微不可察的 opacity 变化，迫使合成器提交一帧到 swap chain
+  document.body.style.opacity = '0.9999';
+  await new Promise((r) => requestAnimationFrame(r));
+  document.body.style.opacity = '1';
+  // 再等两帧确保 swap chain 写入完成
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => requestAnimationFrame(r));
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 async function tryExit() {
   // 隐藏浏览器窗口，避免 always_on_top 遮挡退出确认弹窗
@@ -1345,7 +1457,7 @@ async function handleExportWord() {
     <div class="flex flex-1 min-h-0">
       <!-- 左侧文档列表 / 素材 / 浏览器 -->
       <aside
-        class="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 transition-all duration-200"
+        class="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 transition-[width] duration-200"
         :class="leftCollapsed ? 'w-0 overflow-hidden border-r-0' : 'w-48'"
         @contextmenu="onSidebarContextMenu"
       >
@@ -1570,7 +1682,7 @@ async function handleExportWord() {
       </button>
 
       <!-- 中间：编辑器 + 写作进度条 -->
-      <main ref="mainAreaRef" class="flex-1 min-w-0 min-h-0 flex flex-col">
+      <main ref="mainAreaRef" class="flex-1 min-w-0 min-h-0 flex flex-col" :class="{ 'editor-contained': isResizing }">
         <!-- 写作进度条（生成/审查/润色阶段） -->
         <div
           v-if="composeActive && isWritingPhase"
@@ -1718,6 +1830,7 @@ async function handleExportWord() {
           @insert-to-chat="handleEditorInsertToChat"
           @delete-material="handleEditorDeleteMaterial"
           @remove-from-tag="handleEditorRemoveFromTag"
+          @toggle-fullscreen="handleToggleFullscreen"
         />
 
         <!-- 写作工作台（问答弹窗，Teleported） -->
@@ -1745,7 +1858,7 @@ async function handleExportWord() {
 
       <!-- 右侧：面板区 -->
       <aside
-        class="flex flex-col border-l border-gray-200 dark:border-gray-800 bg-gray-100/60 dark:bg-gray-900/30 shrink-0 transition-all duration-200"
+        class="flex flex-col border-l border-gray-200 dark:border-gray-800 bg-gray-100/60 dark:bg-gray-900/30 shrink-0 transition-[width] duration-200"
         :class="rightCollapsed ? 'w-0 overflow-hidden border-l-0' : 'w-80'"
         @contextmenu="onSidebarContextMenu"
       >
@@ -1885,6 +1998,16 @@ async function handleExportWord() {
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="11" fill="currentColor" fill-opacity="0.12" />
             <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M12 17h.01" />
+          </svg>
+        </button>
+        <!-- 反馈按钮 -->
+        <button
+          title="意见反馈"
+          class="ml-1 text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex-shrink-0 leading-none no-drag"
+          @click="showFeedback = true"
+        >
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
         </button>
         <span class="text-gray-500 dark:text-gray-400">大庆油田 | 陈刚 18088793359</span>
@@ -2140,6 +2263,13 @@ async function handleExportWord() {
       </div>
     </Teleport>
 
+    <!-- 意见反馈弹窗 -->
+    <FeedbackDialog
+      :show="showFeedback"
+      :appVersion="appVersion"
+      @close="showFeedback = false"
+    />
+
     <!-- 评分详情 Popover -->
     <Teleport to="body">
       <div
@@ -2329,6 +2459,34 @@ async function handleExportWord() {
         </div>
       </div>
     </Teleport>
+
+    <!-- 全屏过渡遮罩 -->
+    <Teleport to="body">
+      <Transition name="overlay-fade">
+        <div
+          v-if="overlayVisible"
+          class="fixed inset-0 z-[99999] flex items-center justify-center"
+          style="background: #1e1f2b"
+        >
+          <div class="flex flex-col items-center gap-4">
+            <!-- 品牌标识动画 -->
+            <div class="text-blue-400 text-xl font-bold tracking-wider animate-pulse">
+              AiPen
+            </div>
+            <!-- 状态文字 -->
+            <div class="text-gray-400 text-sm">
+              {{ overlayText }}
+            </div>
+            <!-- 进度小点 -->
+            <div class="flex gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0ms"></span>
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 150ms"></span>
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 300ms"></span>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -2356,5 +2514,22 @@ async function handleExportWord() {
 }
 .animate-marquee-sq {
   animation: marquee-sq 1.2s ease-in-out infinite;
+}
+
+/* 全屏过渡遮罩 */
+.overlay-fade-enter-active {
+  transition: opacity 0.12s ease-out;
+}
+.overlay-fade-leave-active {
+  transition: opacity 0.25s ease-in;
+}
+.overlay-fade-enter-from,
+.overlay-fade-leave-to {
+  opacity: 0;
+}
+
+/* 编辑器布局隔离：窗口缩放期间冻结编辑器内部重排，消除 ProseMirror 中间宽度渲染 */
+.editor-contained {
+  contain: layout style;
 }
 </style>

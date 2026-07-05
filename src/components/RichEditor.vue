@@ -154,6 +154,7 @@ const emit = defineEmits<{
   'insert-to-chat': [text: string]
   'delete-material': [selectionStart: number]
   'remove-from-tag': [selectionStart: number]
+  'toggle-fullscreen': []
 }>()
 
 const docStore = useDocumentStore()
@@ -330,9 +331,35 @@ const zoomPercent = computed(() => Math.round(pageZoom.value * 100))
 
 // ── 大纲面板 ──
 const showOutline = ref(false)
+const outlineWidth = ref(200)
+const MIN_OUTLINE_WIDTH = 200
+const MAX_OUTLINE_WIDTH = 500
 
 interface HeadingItem { level: number; text: string; pos: number }
 const headings = ref<HeadingItem[]>([])
+
+const isResizingOutline = ref(false)
+
+function startResizeOutline(e: MouseEvent) {
+  e.preventDefault()
+  isResizingOutline.value = true
+  const startX = e.clientX
+  const startWidth = outlineWidth.value
+
+  const onMouseMove = (ev: MouseEvent) => {
+    const delta = ev.clientX - startX
+    outlineWidth.value = Math.min(MAX_OUTLINE_WIDTH, Math.max(MIN_OUTLINE_WIDTH, startWidth + delta))
+  }
+
+  const onMouseUp = () => {
+    isResizingOutline.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
 
 function extractHeadings(ed: any) {
   if (!ed) { headings.value = []; return }
@@ -849,6 +876,27 @@ const editor = useEditor({
     handleDOMEvents: {
       keydown: (_view, event) => {
         const ke = event as KeyboardEvent
+        // Ctrl+F / Ctrl+H：使用内置查找替换，阻止浏览器原生查找窗口
+        if ((ke.ctrlKey || ke.metaKey) && (ke.key === 'f' || ke.key === 'F')) {
+          ke.preventDefault()
+          if (!searchOpen.value) {
+            searchOpen.value = true
+            setTimeout(() => searchInputRef.value?.focus(), 50)
+          } else {
+            searchInputRef.value?.focus()
+          }
+          return true
+        }
+        if ((ke.ctrlKey || ke.metaKey) && (ke.key === 'h' || ke.key === 'H')) {
+          ke.preventDefault()
+          if (!searchOpen.value) searchOpen.value = true
+          // Ctrl+H 打开面板并切换到「替换」输入框
+          setTimeout(() => {
+            const replaceInput = document.querySelector('.rich-search-input[placeholder="替换为..."]') as HTMLInputElement | null
+            replaceInput?.focus()
+          }, 50)
+          return true
+        }
         if (ke.key === 'Backspace') {
           const ed = editor.value
           if (!ed) return false
@@ -1265,6 +1313,7 @@ const svg = {
   toggleHeader: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/><rect x="5" y="5" width="2" height="2" fill="currentColor" stroke="none"/></svg>`,
   printer: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 12H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`,
   outline: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
+  fullscreen: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`,
   minus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
   plus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
 }
@@ -1542,6 +1591,11 @@ function btnClass(active: boolean) {
       <span class="text-[11px] font-medium tabular-nums select-none min-w-[34px] text-center" :style="{ color: btnText }">{{ zoomPercent }}%</span>
       <button title="页面放大 Ctrl+滚轮↑" class="rich-btn" @mousedown.prevent="zoomIn" v-html="svg.plus" />
 
+      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
+
+      <!-- 全屏模式 -->
+      <button title="全屏模式" class="rich-btn" @mousedown.prevent="emit('toggle-fullscreen')" v-html="svg.fullscreen" />
+
     </div>
 
     <!-- 查找替换面板 -->
@@ -1601,7 +1655,8 @@ function btnClass(active: boolean) {
       <div
         v-if="showOutline"
         class="rich-outline shrink-0 flex flex-col border-r overflow-hidden"
-        :style="{ backgroundColor: tbBg, borderColor: tbBorder, width: '200px' }"
+        :class="{ 'select-none': isResizingOutline }"
+        :style="{ backgroundColor: tbBg, borderColor: tbBorder, width: outlineWidth + 'px' }"
       >
         <div class="flex items-center justify-between px-2.5 py-1.5 border-b shrink-0" :style="{ borderColor: tbBorder }">
           <span class="text-[11px] font-semibold" :style="{ color: btnText }">大纲导航</span>
@@ -1635,6 +1690,13 @@ function btnClass(active: boolean) {
           </div>
         </div>
       </div>
+
+      <!-- 拉伸分隔条 -->
+      <div
+        v-if="showOutline"
+        class="shrink-0 w-[3px] cursor-col-resize"
+        @mousedown="startResizeOutline"
+      />
 
       <!-- TipTap 编辑区 -->
       <EditorContent :editor="editor" class="flex-1 overflow-y-auto rich-content" :style="{ color: contentText }" />
@@ -2112,8 +2174,8 @@ function btnClass(active: boolean) {
   animation: outlineSlideIn 0.15s ease-out;
 }
 @keyframes outlineSlideIn {
-  from { width: 0; opacity: 0; }
-  to { width: 200px; opacity: 1; }
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 .rich-outline .outline-item:hover {
   background: v-bind(ddHoverBg);

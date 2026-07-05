@@ -34,3 +34,5 @@ key.pem
 
 # SDK progress
 .superpowers/
+.vercel
+.env*

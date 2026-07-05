@@ -209,7 +209,7 @@ async function handleRollback(versionId: string) {
           <div class="flex items-center gap-2 mt-1">
             <span class="text-xs text-gray-400 dark:text-gray-500">{{ formatDate(v.created_at) }}</span>
             <!-- 操作按钮：hover 时显示 -->
-            <div class="hidden group-hover:flex items-center gap-0.5">
+            <div class="invisible group-hover:visible flex items-center gap-0.5">
               <button
                 class="h-5 w-5 flex items-center justify-center text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
                 title="查看此版本"
