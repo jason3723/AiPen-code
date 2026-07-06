@@ -1,6 +1,6 @@
 [package]
 name = "aipen"
-version = "3.0.4"
+version = "3.0.5"
 description = "AiPen — AI 辅助文档写作"
 authors = ["you"]
 edition = "2021"
@@ -32,3 +32,11 @@ zip = "2"
 quick-xml = "0.37"
 url = "2"
 base64 = "0.22"
+
+# Windows 专属依赖：用于建立窗口 owner 关系（替代 always_on_top）
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+] }

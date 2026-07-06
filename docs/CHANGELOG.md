@@ -1,5 +1,33 @@
 # AiPen 更新日志
 
+## v3.0.5 (2026-07-06)
+
+### 🏗️ 架构重构
+
+- **浏览器窗口底层重构**：使用 Windows OS 级别 Owned Window (`GWLP_HWNDPARENT`) 替代 `always_on_top`，一次性修复 4 类窗口管理 bug：
+  - 最小化主窗口时浏览器跟随隐藏
+  - Win+D 显示桌面时浏览器同步隐藏
+  - 任务栏恢复主窗口时浏览器跟随恢复
+  - 主窗口销毁时浏览器自动销毁，无残留
+
+### ✨ 改进
+
+- Rust 后端 `resize_browser_webview` 末尾补 owner 关系重设，防止 wry/WebView2 内部重置
+- `close_browser` 显式解绑 owner，防止异步销毁时序窗口残留
+- `show_browser` 先 `set_focus` 主窗口再显示浏览器，修复剪藏弹窗恢复后被系统强制隐藏的问题
+- 前端 `handleMinimize` / `onFocusChanged` 逻辑简化，删除手动 `hide_browser` 调用
+
+### 📝 变更
+
+- 行为变更：其他程序窗口可以覆盖 AiPen 浏览器面板（由 `always_on_top` 始终置顶改为跟随主窗口的 Owned Window 关系）
+- 新增 Windows-only 依赖 `raw-window-handle 0.6` 和 `windows 0.58`（macOS/Linux 编译不受影响）
+
+### 🐛 修复
+
+- 修复折叠/展开侧栏时浏览器窗口定位延迟的问题
+
+---
+
 ## v3.0.4 (2026-07-06)
 
 ### 🐛 修复

@@ -999,16 +999,15 @@ onMounted(async () => {
   });
 
   // 监听主窗口焦点变化：
-  //   - 主窗口获焦 → 显示浏览器窗口
-  //   - 主窗口失焦 → 仅在最小化时隐藏（用户点击浏览器窗口导致的失焦由 Rust 端处理）
-  // always_on_top 的浏览器窗口不会自动跟随主窗口隐藏/最小化，必须手动同步。
+  //   - 主窗口获焦 + browser tab 激活 → resize + show（从最小化恢复时）
+  //   - 失焦时不再需要手动 hide——owned window 自动跟随 owner 隐藏
   focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
     // 缩放过渡期间跳过，防止 show_browser / hide_browser 引发额外闪烁
     if (isResizing.value) return;
     if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
       try {
         if (focused) {
-          // 主窗口被聚焦 / 从最小化恢复 → 显示浏览器
+          // 主窗口被聚焦 / 从最小化恢复 → resize + show
           const minimized = await getCurrentWindow().isMinimized();
           if (!minimized) {
             const vp = getBrowserViewportRect();
@@ -1017,14 +1016,8 @@ onMounted(async () => {
             }
             await invoke("show_browser");
           }
-        } else {
-          // 主窗口失焦，仅判断“最小化 → 隐藏浏览器”
-          // “用户点击程序外”由 Rust 端浏览器窗口的 Focused(false) 事件处理
-          const minimized = await getCurrentWindow().isMinimized();
-          if (minimized) {
-            await invoke("hide_browser");
-          }
         }
+        // 失焦分支已删除：owned window 自动跟随 owner 隐藏/最小化/恢复
       } catch { /* 忽略 */ }
     }
   });
@@ -1049,12 +1042,7 @@ function handleCommit() {
 
 // ── 窗口控制 ──
 async function handleMinimize() {
-  // 最小化前先隐藏浏览器子窗口（always_on_top 窗口不会跟随隐藏）
-  if (browserOpen.value) {
-    try {
-      await invoke("hide_browser");
-    } catch { /* 忽略 */ }
-  }
+  // owned window 自动跟随主窗口最小化，无需手动 hide_browser
   await getCurrentWindow().minimize();
 }
 async function handleMaximize() {

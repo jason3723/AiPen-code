@@ -5,6 +5,16 @@ use std::path::{Path, PathBuf};
 use ai::ChatMessagePayload;
 use uuid::Uuid;
 
+// Windows 专属：建立窗口 owner 关系（替代 always_on_top）
+#[cfg(target_os = "windows")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    SetWindowLongPtrW, GWLP_HWNDPARENT,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+
 // ─── 精神融入：内置知识库摘要索引 ──────────────────────────────
 // 每个内置 KB 一句话描述，用于 AI 阶段 1 做精匹配
 
@@ -1694,6 +1704,40 @@ pub async fn delete_bookmark(
 
 use base64::Engine;
 
+/// 将 browser_window 设为 main_window 的 Owned Window
+/// 效果：浏览器窗口自动跟随主窗口最小化/恢复，自动保持在上层
+///
+/// 注意：此函数**幂等**，可在多处反复调用以应对 wry/WebView2 内部重置 owner 的情况。
+#[cfg(target_os = "windows")]
+fn set_browser_as_owned(
+    main: &tauri::WebviewWindow,
+    browser: &tauri::WebviewWindow,
+) -> Result<(), String> {
+    let main_hwnd = get_hwnd(main)?;
+    let browser_hwnd = get_hwnd(browser)?;
+    unsafe {
+        // 失败不回退到 always_on_top（避免行为分叉），只 eprintln
+        // 注：windows 0.58 的 SetWindowLongPtrW 是 generic P0 形式，
+        // hwnd 取 HWND，dwnewlong 取 isize（GWLp_HWNDPARENT 是数值）
+        SetWindowLongPtrW(
+            HWND(browser_hwnd),
+            GWLP_HWNDPARENT,
+            main_hwnd as isize,
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn get_hwnd(window: &tauri::WebviewWindow) -> Result<*mut core::ffi::c_void, String> {
+    let wh = window.window_handle()
+        .map_err(|e| format!("获取窗口句柄失败: {}", e))?;
+    match wh.as_raw() {
+        RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as *mut core::ffi::c_void),
+        _ => Err("非 Windows 平台".to_string()),
+    }
+}
+
 const BROWSER_INIT_SCRIPT: &str = r#"
 (function() {
   'use strict';
@@ -2040,7 +2084,6 @@ pub async fn create_browser_webview(
     let logical_y = main_pos.y as f64 / scale + y;
 
     let app_handle = app.clone();
-    let app_handle2 = app.clone();
 
     // 解码 base64 payload 并分发事件（save 和 chat 共用）
     fn decode_and_emit(
@@ -2093,7 +2136,8 @@ pub async fn create_browser_webview(
     .shadow(false)
     .skip_taskbar(true)
     .resizable(true)
-    .always_on_top(true)
+    // ★ POC 阶段：暂时禁用 always_on_top，改用 owner 关系
+    // .always_on_top(true)
     // 设置标准桌面浏览器 User-Agent，防止政企网站检测 WebView 并拒绝访问
     .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36")
     .initialization_script(BROWSER_INIT_SCRIPT)
@@ -2121,23 +2165,18 @@ pub async fn create_browser_webview(
     .build()
     .map_err(|e| format!("创建浏览器窗口失败: {}", e))?;
 
-    // 监听浏览器窗口失焦：当浏览器失焦且主窗口也没焦点时 → 隐藏浏览器
-    // 这处理"用户点击程序外其他地方"的场景。浏览器窗口与主窗口是独立的，
-    // 用户点击主窗口不会触发此处（主窗口获焦由前端 onFocusChanged 处理）。
-    wv.on_window_event(move |event| {
-        if let tauri::WindowEvent::Focused(false) = event {
-            if let Some(main) = app_handle2.get_webview_window("main") {
-                if let Ok(main_focused) = main.is_focused() {
-                    if !main_focused {
-                        // 浏览器失焦 + 主窗口也失焦 → 用户点到了程序外 → 隐藏浏览器
-                        if let Some(wv) = app_handle2.get_webview_window("browser") {
-                            let _ = wv.hide();
-                        }
-                    }
-                }
+    // ★ POC：建立所属关系，浏览器窗口跟随主窗口
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(main_win) = app.get_webview_window("main") {
+            if let Err(e) = set_browser_as_owned(&main_win, &wv) {
+                eprintln!("[Browser] 设置 owned window 失败: {}", e);
             }
         }
-    });
+    }
+
+    // ★ owned window 关系已建立，最小化/恢复/Win+D 全部由 OS 自动处理
+    // 不再需要监听浏览器失焦手动 hide（v1 旧逻辑已删除）
 
     Ok(())
 }
@@ -2192,12 +2231,35 @@ pub async fn resize_browser_webview(
         .map_err(|e| format!("设置位置失败: {}", e))?;
     wv.set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| format!("设置大小失败: {}", e))?;
+
+    // ★ 防 P0-1：Tauri/wry 内部 set_position/set_size 走 SetWindowPos，
+    // 可能带 z-order flag，连带把 GWLP_HWNDPARENT 抹掉。重新建立 owner 关系保持幂等。
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = set_browser_as_owned(&main, &wv) {
+            eprintln!("[Browser] resize 后重设 owner 失败: {}", e);
+        }
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn close_browser(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview_window("browser") {
+        // ★ 防 P2-5：显式解绑 owner 关系，避免异步销毁时序下窗口残留
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(hwnd) = get_hwnd(&wv) {
+                unsafe {
+                    let _ = SetWindowLongPtrW(
+                        HWND(hwnd),
+                        GWLP_HWNDPARENT,
+                        0 as isize,
+                    );
+                }
+            }
+        }
         let _ = wv.close();
     }
     Ok(())
@@ -2213,6 +2275,12 @@ pub async fn hide_browser(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn show_browser(app: tauri::AppHandle) -> Result<(), String> {
+    // ★ 防 P1-1：剪藏弹窗完成恢复时，必须先让主窗口获焦，
+    // 否则 owned window 可能因 owner 处于"失焦态"被系统强制隐藏，
+    // 随后 show_browser() 调用会被压住。
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.set_focus();
+    }
     if let Some(wv) = app.get_webview_window("browser") {
         wv.show().map_err(|e| format!("显示浏览器失败: {}", e))?;
     }
