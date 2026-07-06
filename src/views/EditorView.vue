@@ -32,7 +32,7 @@ const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
 
 // ── 应用版本 ──
-const appVersion = "3.0.2";
+const appVersion = "3.0.4";
 
 const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
@@ -344,8 +344,15 @@ function handleClipClose() {
 }
 
 // 处理浏览器剪藏（emit 和 eval 通道共用）
+let _lastClipText = ""
+let _lastClipTime = 0
 function handleBrowserClip(text: string, url?: string, title?: string) {
   if (!text) return;
+  // 双通道去重：同一文本 1 秒内只处理一次
+  const now = Date.now()
+  if (text === _lastClipText && now - _lastClipTime < 1000) return
+  _lastClipText = text
+  _lastClipTime = now
   // 隐藏浏览器窗口，使素材剪藏弹窗可见（浏览器 always_on_top 会遮挡主窗口）
   if (browserOpen.value) {
     browserManuallyHidden.value = true;
@@ -641,6 +648,11 @@ function scoreTagline(score: number): string {
 // ── 编辑器引用 & 选中文本 ──
 const richEditorRef = ref<InstanceType<typeof RichEditor>>();
 const selectedText = ref("");
+const selectedWordCount = ref(0);
+
+function onSelectionChange(len: number) {
+  selectedWordCount.value = len;
+}
 
 function getSelectedText() {
   if (richEditorRef.value?.getSelectedText) {
@@ -1019,6 +1031,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  if (_browserResizeTimer) clearTimeout(_browserResizeTimer);
   closeRequestUnlisten?.();
   browserClipUnlisten?.();
   browserChatUnlisten?.();
@@ -1376,7 +1389,7 @@ async function handleExportWord() {
           title="导出为 Word 文档"
           @click="handleExportWord"
         >
-          导出 Word
+          💾 导出 Word
         </button>
         <!-- 导出设置 -->
         <button
@@ -1384,7 +1397,7 @@ async function handleExportWord() {
           title="导出 Word 排版设置"
           @click="showExportSettings = true"
         >
-          ⚙ 排版设置
+          📄 排版设置
         </button>
         <!-- Commit 输入区域 -->
         <input
@@ -1399,7 +1412,7 @@ async function handleExportWord() {
           :disabled="loading.commit"
           @click="handleCommit"
         >
-          {{ loading.commit ? "提交中..." : "提交版本" }}
+          {{ loading.commit ? "提交中..." : "📌 提交版本" }}
         </button>
         <!-- 分隔符 -->
         <span class="h-5 w-px bg-gray-200 dark:bg-gray-700" />
@@ -1836,6 +1849,7 @@ async function handleExportWord() {
           @delete-material="handleEditorDeleteMaterial"
           @remove-from-tag="handleEditorRemoveFromTag"
           @toggle-fullscreen="handleToggleFullscreen"
+          @selection-change="onSelectionChange"
         />
 
         <!-- 写作工作台（问答弹窗，Teleported） -->
@@ -1954,6 +1968,9 @@ async function handleExportWord() {
           素材字数: {{ typeof materialStore.currentMaterialContent === 'object' && materialStore.currentMaterialContent.content ? materialStore.currentMaterialContent.content.reduce(
             (acc: number, n: any) => acc + (n.content ? n.content.reduce((s: number, t: any) => s + (t.text ? t.text.length : 0), 0) : 0), 0
           ) : (typeof materialStore.currentMaterialContent === 'string' ? materialStore.currentMaterialContent.length : 0) }}
+        </span>
+        <span v-if="selectedWordCount > 0" class="text-blue-500 dark:text-blue-400">
+          选中: {{ selectedWordCount }} 字
         </span>
         <template v-if="editMode === 'document' && !isViewingHistory">
           <span v-if="draftSaveStatus === 'pending'" class="text-yellow-700 dark:text-yellow-500">● 检测到变更…</span>

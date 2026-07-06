@@ -1,11 +1,11 @@
 {
-  "version": "3.0.3",
-  "pub_date": "2026-07-05T02:33:00Z",
+  "version": "3.0.4",
+  "notes": "🔧 编辑器优化与细节改进\n• IME 组合输入修复：解决中文输入法打字时字跳脱、覆盖等异常问题\n• 状态栏新增选中字数统计：选中文字时实时显示选中字符数\n• 工具栏按钮优化：导出 Word、排版设置、提交版本添加统一图标\n• 版本号升至 3.0.4",
+  "pub_date": "2026-07-06T05:27:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkIvOXZXV3R5R2RxckhnVTJCWGNEaERrcDRaTm1rNjUzVXZGWU5xekF4VVRjNkpqWE56TWlxd3FuUGpxVllyRWhuVldKOTcvWnJ6ZDBkTHVLR25obkFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjE4Nzg4CWZpbGU6QWlQZW5fMy4wLjJfeDY0LXNldHVwLmV4ZQpTaDFpbE05ZDdLQ3V3d212cnk4eS9QWHJkd3FIR1hBNWpmYU40RlBTb2ZlK1VhV2JweDBiSUx3R0Fzb2FjSmFaWVo4STg0K2ZrMmFVK2hnaU54dEpCUT09Cg==",
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_3.0.3_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkxPblNrOGVXY1RBeEhVR1NVUk1heTBjNFZ1MHlTRGRzQmxnVTlENU5xQXF6ZGJLNStYYjJvbW5VVHRsbW04ZUVwREpKdWlzMDNtSzArNnNyWWZuRUE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzE1NTk0CWZpbGU6QWlQZW5fMy4wLjRfeDY0LXNldHVwLmV4ZQpWYXhCaFJvdTVpSnRYQVJaMnBTRDVvMnNudisrekF6TGpsbnRIWHlmYndpWHpZVjMvT0hOa1dZMTZoeEtwaWg0QjgzNTZ5L0pwWmJGaDJydjk5bWNCdz09Cg==",
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_3.0.4_x64-setup.exe"
     }
-  },
-  "notes": "📖 添加使用手册\n• 首次启动自动创建「📖 AiPen 使用手册」文档，覆盖全部功能说明\n\n🔧 优化其他细节\n• 多项 UI 交互与稳定性改进"
+  }
 }

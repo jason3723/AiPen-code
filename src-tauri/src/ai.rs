@@ -180,7 +180,7 @@ pub async fn query_balance(config: &AIConfig) -> Result<String, AIError> {
         .map_err(|e| AIError::RequestFailed(e.to_string()))?;
 
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let body = response.text().await.unwrap_or_else(|e| format!("(读取响应体失败: {})", e));
 
     if !status.is_success() {
         let msg = if body.len() > 300 { format!("{}...", &body[..body.floor_char_boundary(300)]) } else { body };
@@ -256,7 +256,7 @@ pub async fn test_connection(config: &AIConfig) -> Result<String, AIError> {
     if status.is_success() {
         Ok("✅ 连接成功！API 密钥有效。".to_string())
     } else {
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().await.unwrap_or_else(|e| format!("(读取响应体失败: {})", e));
         let msg = if body.len() > 200 {
             format!("{}...", &body[..body.floor_char_boundary(200)])
         } else {
@@ -461,7 +461,7 @@ pub async fn send_ai_request_streaming(
 
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().await.unwrap_or_else(|e| format!("(读取响应体失败: {})", e));
         let msg = if body.len() > 300 { format!("{}...", &body[..body.floor_char_boundary(300)]) } else { body };
         return Err(AIError::ApiError { status: status.as_u16(), message: msg });
     }
@@ -704,6 +704,9 @@ fn parse_analysis_response(text: &str) -> Result<AIAnalysis, AIError> {
     let json_str = if let Some(start) = text.find("```json\n") {
         let s = start + "```json\n".len();
         if let Some(end) = text[s..].find("\n```") {
+            &text[s..s + end]
+        } else if let Some(end) = text[s..].find("```") {
+            // 兼容结尾无换行的 ```
             &text[s..s + end]
         } else {
             text

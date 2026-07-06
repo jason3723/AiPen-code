@@ -326,6 +326,10 @@ export const useDocumentStore = defineStore("document", () => {
           String(now.getSeconds()).padStart(2, "0");
       } catch {
         draftSaveStatus.value = "error";
+        // 3 秒后从 error 恢复到 idle，避免错误状态顽固不消
+        setTimeout(() => {
+          if (draftSaveStatus.value === "error") draftSaveStatus.value = "idle";
+        }, 3000);
       }
     }, 1000);
   });

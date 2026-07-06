@@ -1,6 +1,7 @@
 use crate::{ai, db, diff, version};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use serde_json;
+use std::path::{Path, PathBuf};
 use ai::ChatMessagePayload;
 use uuid::Uuid;
 
@@ -338,9 +339,9 @@ pub async fn analyze_revision(
 
     // 持久化分析结果
     let analysis_json = serde_json::to_string(&analysis).map_err(|e| e.to_string())?;
-    db::save_analysis(&state.db, &new_version_id, Some(&old_version_id), &analysis_json)
-        .await
-        .ok();
+    if let Err(e) = db::save_analysis(&state.db, &new_version_id, Some(&old_version_id), &analysis_json).await {
+        eprintln!("[AiPen] 保存分析结果失败: {}", e);
+    }
 
     Ok(analysis)
 }
@@ -465,6 +466,33 @@ pub struct FileStatus {
     pub writable: bool,
 }
 
+// ─── 路径安全校验（防路径穿越攻击） ───
+
+/// 获取应用数据目录作为安全白名单基路径
+fn get_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app_handle.path().app_local_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
+    dir.canonicalize().map_err(|e| format!("无法解析数据目录: {}", e))
+}
+
+/// 解析路径到规范形式，并校验是否在允许的基目录范围内
+/// 防 ../ 路径穿越和符号链接攻击
+fn resolve_safe_path(path: &str, allowed_base: &Path) -> Result<PathBuf, String> {
+    let p = Path::new(path);
+    let parent = p.parent().unwrap_or(Path::new("."));
+    let canonical_parent = parent.canonicalize()
+        .map_err(|e| format!("无法解析路径: {}", e))?;
+    let filename = p.file_name()
+        .ok_or_else(|| "路径缺少文件名".to_string())?;
+    let resolved = canonical_parent.join(filename);
+    if resolved.starts_with(allowed_base) {
+        Ok(resolved)
+    } else {
+        Err("路径不在允许范围内".to_string())
+    }
+}
+
 #[tauri::command]
 pub async fn check_file_writable(path: String) -> Result<FileStatus, String> {
     let p = std::path::Path::new(&path);
@@ -488,38 +516,66 @@ pub async fn export_word_file(
     path: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
+    // 基础安全校验：只允许 .docx 后缀，防止被利用写入任意文件类型
+    if !path.to_lowercase().ends_with(".docx") {
+        return Err("导出文件必须为 .docx 格式".to_string());
+    }
     tokio::fs::write(&path, &data).await.map_err(|e| format!("写入文件失败: {}", e))
 }
 
 #[tauri::command]
-pub async fn read_image_file(path: String) -> Result<Vec<u8>, String> {
-    tokio::fs::read(&path).await.map_err(|e| format!("读取图片失败: {}", e))
+pub async fn read_image_file(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    // 安全校验：只允许读取应用数据目录内的文件
+    let data_dir = get_app_data_dir(&app_handle)?;
+    let safe_path = resolve_safe_path(&path, &data_dir)?;
+    tokio::fs::read(&safe_path).await.map_err(|e| format!("读取图片失败: {}", e))
 }
 
 /// 复制图片到目标路径，返回图片字节（绕过 fs 插件权限）
 #[tauri::command]
-pub async fn save_image_file(source_path: String, dest_path: String) -> Result<Vec<u8>, String> {
+pub async fn save_image_file(
+    app_handle: tauri::AppHandle,
+    source_path: String,
+    dest_path: String,
+) -> Result<Vec<u8>, String> {
     let bytes = tokio::fs::read(&source_path).await.map_err(|e| format!("读取源图片失败: {}", e))?;
-    // 确保目标父目录存在
-    if let Some(parent) = std::path::Path::new(&dest_path).parent() {
+    // 校验目标路径：必须在应用数据目录内，防路径穿越
+    let data_dir = get_app_data_dir(&app_handle)?;
+    let safe_dest = resolve_safe_path(&dest_path, &data_dir)?;
+    if let Some(parent) = safe_dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
-    let bytes_clone = bytes.clone();
-    tokio::fs::write(&dest_path, &bytes).await.map_err(|e| format!("保存图片失败: {}", e))?;
-    Ok(bytes_clone)
+    tokio::fs::write(&safe_dest, &bytes).await.map_err(|e| format!("保存图片失败: {}", e))?;
+    Ok(bytes)
 }
 
 /// 保存原始字节到本地文件（用于粘贴等场景，绕过 fs 插件权限）
 #[tauri::command]
-pub async fn save_image_bytes(path: String, data: Vec<u8>) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
+pub async fn save_image_bytes(
+    app_handle: tauri::AppHandle,
+    path: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    // 安全校验：只允许写入应用数据目录内的文件
+    let data_dir = get_app_data_dir(&app_handle)?;
+    let safe_path = resolve_safe_path(&path, &data_dir)?;
+    if let Some(parent) = safe_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
-    tokio::fs::write(&path, &data).await.map_err(|e| format!("保存图片失败: {}", e))
+    tokio::fs::write(&safe_path, &data).await.map_err(|e| format!("保存图片失败: {}", e))
 }
 
 #[tauri::command]
-pub fn exit_app() {
+pub async fn exit_app(app_handle: tauri::AppHandle) {
+    // 请求窗口关闭以触发 Tauri 资源清理流程（SQLite 连接刷新等）
+    if let Some(win) = app_handle.get_webview_window("main") {
+        let _ = win.close();
+    }
+    // 短暂等待清理完成
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     std::process::exit(0);
 }
 
@@ -580,7 +636,12 @@ fn extract_text_from_bytes(data: &[u8], ext: &str) -> Result<String, String> {
 pub async fn parse_kb_file(
     path: String,
 ) -> Result<String, String> {
+    const MAX_SIZE: u64 = 50 * 1024 * 1024; // 50MB
     let p = std::path::Path::new(&path);
+    let metadata = p.metadata().map_err(|e| format!("无法读取文件信息: {}", e))?;
+    if metadata.len() > MAX_SIZE {
+        return Err(format!("文件过大（{}MB），知识库文件上限 50MB", metadata.len() / 1024 / 1024));
+    }
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
     let data = std::fs::read(p).map_err(|e| format!("读取文件失败: {}", e))?;
     extract_text_from_bytes(&data, ext)
@@ -1631,7 +1692,6 @@ pub async fn delete_bookmark(
 
 // ─── 浏览器内嵌窗口（无装饰、精确定位在编辑区上方） ──────────
 
-use tauri::Manager;
 use base64::Engine;
 
 const BROWSER_INIT_SCRIPT: &str = r#"

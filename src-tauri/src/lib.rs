@@ -13,7 +13,7 @@ use base64::Engine;
 static LAST_CLIP: Mutex<Option<(String, Instant)>> = Mutex::new(None);
 
 fn should_process_clip(payload: &str) -> bool {
-    let mut last = LAST_CLIP.lock().unwrap();
+    let mut last = LAST_CLIP.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((last_payload, last_time)) = last.as_ref() {
         if last_payload == payload && last_time.elapsed() < Duration::from_secs(5) {
             return false;
@@ -91,7 +91,7 @@ pub fn run() {
                     .header("Access-Control-Allow-Headers", "*")
                     .status(204)
                     .body(Vec::new())
-                    .unwrap();
+                    .unwrap_or_else(|_| tauri::http::Response::builder().status(500).body(Vec::new()).unwrap());
             }
 
             // 解析 URL：http://aipen-clip.localhost/save/<base64>
@@ -141,7 +141,7 @@ pub fn run() {
                 .header("Access-Control-Allow-Origin", "*")
                 .status(200)
                 .body(b"{\"ok\":true}".to_vec())
-                .unwrap()
+                .unwrap_or_else(|_| tauri::http::Response::builder().status(500).body(Vec::new()).unwrap())
         })
         .setup(|app| {
             let app_dir = app.path().app_data_dir()

@@ -256,6 +256,8 @@ watch(() => updateState.phase, (phase) => {
   }
 });
 onUnmounted(() => {
+  if (saveTimer) clearTimeout(saveTimer);
+  if (testTimer) clearTimeout(testTimer);
   if (upToDateTimer) clearTimeout(upToDateTimer);
   if (backupTimer) clearTimeout(backupTimer);
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, onUnmounted } from "vue";
 
 export interface ConfirmOptions {
   title: string;
@@ -49,6 +49,10 @@ watch(visible, (val) => {
   } else {
     document.removeEventListener("keydown", onKeydown);
   }
+});
+
+onUnmounted(() => {
+  document.removeEventListener("keydown", onKeydown);
 });
 
 defineExpose({ show });

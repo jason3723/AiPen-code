@@ -13,6 +13,8 @@ pub enum DbError {
     Sqlx(#[from] sqlx::Error),
     #[error("记录未找到: {0}")]
     NotFound(String),
+    #[error("参数校验失败: {0}")]
+    Validation(String),
 }
 
 // ─── 模型 ────────────────────────────────────────────────────
@@ -3304,11 +3306,13 @@ fn merge_consecutive_lists(nodes: Vec<serde_json::Value>) -> Vec<serde_json::Val
             if let Some(last) = merged.last_mut() {
                 let last_type = last["type"].as_str().unwrap_or("");
                 if last_type == list_type {
-                    // 同类型列表 → 追加 listItem
-                    if let Some(item) = node["content"].get(0) {
+                    // 同类型列表 → 追加所有 listItem
+                    if let Some(items) = node["content"].as_array() {
                         if let Some(content) = last.get_mut("content") {
                             if let Some(arr) = content.as_array_mut() {
-                                arr.push(item.clone());
+                                for item in items {
+                                    arr.push(item.clone());
+                                }
                             }
                         }
                     }
@@ -3457,6 +3461,10 @@ pub async fn delete_document(pool: &Pool<Sqlite>, doc_id: &str) -> Result<(), Db
 // ─── 文件夹 CRUD ────────────────────────────────────────────
 
 pub async fn create_folder(pool: &Pool<Sqlite>, name: &str) -> Result<Folder, DbError> {
+    // 禁止创建名为 "default" 的文件夹（与未分类文档的 project_id 魔数冲突）
+    if name.eq_ignore_ascii_case("default") {
+        return Err(DbError::Validation(format!("文件夹名称 \"{}\" 不可用", name)));
+    }
     let id = uuid::Uuid::new_v4().to_string();
     // 自动计算 sort_order：取当前最大值 + 1
     let max_order: i64 = sqlx::query_scalar(

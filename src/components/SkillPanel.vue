@@ -194,16 +194,16 @@ async function runSkill(skill: Skill) {
   resultMap.value[skill.id] = '';
   expandedMap.value[skill.id] = true;
 
+  let unlisten: (() => void) | null = null
   try {
     const kbIds = skillKbSelection.value[skill.id] || [];
     const eventId = crypto.randomUUID()
-    const unlisten = await listen<{ token?: string; done?: boolean }>(`ai-stream-${eventId}`, (event) => {
-      if (event.payload.token && !event.payload.done) {
+    unlisten = await listen<{ token?: string; done?: boolean }>(`ai-stream-${eventId}`, (event) => {
+      if (event.payload.done) {
+        // done 信号：非流式一次性返回（如精神融入技能），直接覆盖
+        if (event.payload.token) resultMap.value[skill.id] = event.payload.token
+      } else if (event.payload.token) {
         resultMap.value[skill.id] += event.payload.token
-      }
-      if (event.payload.token && event.payload.done) {
-        // 非流式一次性返回（如精神融入技能），直接覆盖
-        resultMap.value[skill.id] = event.payload.token
       }
     })
 
@@ -215,12 +215,11 @@ async function runSkill(skill: Skill) {
       materialTagIds: matStore.selectedMaterialTagIds.length > 0 ? matStore.selectedMaterialTagIds : null,
       eventId,
     });
-
-    unlisten()
   } catch (e) {
     error.value = String(e);
     resultMap.value[skill.id] = '（执行失败）';
   } finally {
+    unlisten?.()
     loading.value.run = "";
   }
 }

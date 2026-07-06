@@ -108,6 +108,9 @@ function handleFilesSelected(e: Event) {
         attachedFiles.value.push({ name: file.name, content });
       }
     };
+    reader.onerror = () => {
+      console.error("[ChatPanel] 文件读取失败:", file.name);
+    };
     reader.readAsText(file);
   }
   input.value = "";
@@ -243,9 +246,10 @@ async function sendMessage() {
   await nextTick();
   scrollToBottom();
 
+  let unlisten: (() => void) | null = null
   try {
     const eventId = crypto.randomUUID()
-    const unlisten = await listen<{ token?: string; done?: boolean }>(`ai-stream-${eventId}`, (event) => {
+    unlisten = await listen<{ token?: string; done?: boolean }>(`ai-stream-${eventId}`, (event) => {
       if (event.payload.token && !event.payload.done) {
         const aiMsg = messages.value.find(m => m.id === tempAiId)
         if (aiMsg) {
@@ -265,7 +269,6 @@ async function sendMessage() {
       eventId,
     });
 
-    unlisten()
     // 移除临时消息，从 DB 重新加载以保持一致性
     messages.value = messages.value.filter((m) => m.id !== tempId)
     await loadMessages(currentConvId.value);
@@ -275,6 +278,7 @@ async function sendMessage() {
     // 移除临时消息
     messages.value = messages.value.filter((m) => m.id !== tempId && m.id !== tempAiId);
   } finally {
+    unlisten?.()
     loading.value.send = false;
   }
 }

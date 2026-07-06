@@ -247,8 +247,9 @@ pub fn diff_documents(old: &str, new: &str) -> DiffResult {
                     }
 
                     if similarity(old_sub, new_sub) >= INLINE_SIMILARITY_THRESHOLD {
-                        let sub_old = inline_diff(old_sub, new_sub);
-                        let sub_new = inline_diff(old_sub, new_sub);
+                        let sub_diff = inline_diff(old_sub, new_sub);
+                        let sub_old = sub_diff.clone();
+                        let sub_new = sub_diff;
                         old_parts.extend(sub_old.into_iter().filter(|c| c.tag != "insert"));
                         new_parts.extend(sub_new.into_iter().filter(|c| c.tag != "delete"));
                     } else {

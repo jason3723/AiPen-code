@@ -2,6 +2,7 @@
 import { ref, watch, onBeforeUnmount, computed, nextTick } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { Mark, Extension } from '@tiptap/core'
+import Underline from '@tiptap/extension-underline'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import { CellSelection } from 'prosemirror-tables'
@@ -95,10 +96,17 @@ const FontSize = Extension.create({
       attributes: {
         fontSize: {
           default: null,
-          parseHTML: el => el.style.fontSize?.replace(/['"]+/g, '') || null,
+          parseHTML: el => {
+            const raw = el.style.fontSize
+            if (!raw) return null
+            // 兼容旧静态 "16pt" 和新 calc 格式 "calc(16pt * var(--apz, 1))"
+            const m = raw.match(/([\d.]+)\s*pt/)
+            return m ? m[1] + 'pt' : null
+          },
           renderHTML: attrs => {
             if (!attrs.fontSize) return {}
-            return { style: `font-size: ${attrs.fontSize}` }
+            // 参与页面缩放联动：calc(Xpt * var(--apz, 1))，默认 1 保证外部粘贴不炸
+            return { style: `font-size: calc(${attrs.fontSize} * var(--apz, 1))` }
           },
         },
       },
@@ -155,6 +163,7 @@ const emit = defineEmits<{
   'delete-material': [selectionStart: number]
   'remove-from-tag': [selectionStart: number]
   'toggle-fullscreen': []
+  'selection-change': [selectedLength: number]
 }>()
 
 const docStore = useDocumentStore()
@@ -241,6 +250,7 @@ const fontOptions = [
 ]
 /** 当前光标/选区处的字体（优先 inline mark，其次块级样式，最后排版设置） */
 const fontFamily = computed(() => {
+  void editorStateTick.value // 依赖手动触发器，确保 ProseMirror 状态变更时重新求值
   const ed = editor.value
   if (!ed) return es().fontBody
   // 1. 选区级别 inline 字体（textStyle mark）
@@ -306,6 +316,7 @@ function ptToFontSizeLabel(pt: number): string {
 
 /** 当前光标/选区处的字号名称（用于工具栏显示） */
 const currentFontSizeLabel = computed(() => {
+  void editorStateTick.value // 依赖手动触发器，确保 ProseMirror 状态变更时重新求值
   return ptToFontSizeLabel(getContextFontSizePt())
 })
 
@@ -352,13 +363,18 @@ function startResizeOutline(e: MouseEvent) {
   }
 
   const onMouseUp = () => {
+    cleanupResize()
+  }
+  const cleanupResize = () => {
     isResizingOutline.value = false
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
+    window.removeEventListener('blur', cleanupResize)
   }
 
   document.addEventListener('mousemove', onMouseMove)
   document.addEventListener('mouseup', onMouseUp)
+  window.addEventListener('blur', cleanupResize)
 }
 
 function extractHeadings(ed: any) {
@@ -480,6 +496,14 @@ const SearchHighlightExt = Extension.create({
 })
 
 // ── 查找替换 ──
+/** 通用防抖，用于搜索等高频触发操作 */
+function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return ((...args: any[]) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => { timer = null; fn(...args) }, ms)
+  }) as T
+}
 const searchOpen = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const searchQuery = ref('')
@@ -487,6 +511,7 @@ const replaceQuery = ref('')
 const searchCount = ref(0)
 const searchIdx = ref(0)
 const caseSensitive = ref(false)
+const debouncedSearch = debounce(() => doSearch(), 200)
 let _searchMatches: { from: number; to: number }[] = []
 
 function applySearchDecorations() {
@@ -499,6 +524,7 @@ function applySearchDecorations() {
   ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, decos))
 }
 
+function printDocument() { window.print() }
 function toggleSearch() {
   searchOpen.value = !searchOpen.value
   if (searchOpen.value) {
@@ -563,9 +589,8 @@ function doReplaceAll() {
       ed.chain().setTextSelection({ from, to }).deleteSelection().run()
     }
   }
-  clearSearchHighlights()
-  searchCount.value = 0
-  searchIdx.value = 0
+  // 替换完成后重新搜索，更新高亮和计数
+  setTimeout(() => doSearch(), 50)
 }
 function goToResult(idx: number) {
   const ed = editor.value
@@ -649,18 +674,20 @@ function editorSmartMenuPos(cursorX: number, cursorY: number, menuW: number, men
 
 function closeCtxMenu() { ctxMenuShow.value = false }
 
-function execCtxMenuCut() {
+async function execCtxMenuCut() {
   const ed = editor.value
   if (!ed || !ctxMenuSelText.value) return
-  navigator.clipboard.writeText(ctxMenuSelText.value)
+  try { await navigator.clipboard.writeText(ctxMenuSelText.value) }
+  catch { /* clipboard API 不可用，降级为空操作（避免错误删除文字） */ }
   ed.chain().deleteSelection().run()
   ed.commands.focus()
   closeCtxMenu()
 }
-function execCtxMenuCopy() {
+async function execCtxMenuCopy() {
   const ed = editor.value
   if (!ed || !ctxMenuSelText.value) return
-  navigator.clipboard.writeText(ctxMenuSelText.value)
+  try { await navigator.clipboard.writeText(ctxMenuSelText.value) }
+  catch { /* clipboard API 不可用 */ }
   ed.commands.focus()
   closeCtxMenu()
 }
@@ -712,16 +739,21 @@ function setTextColor(color: string) {
   editor.value?.chain().setColor(color).run()
   colorPickerOpen.value = false
 }
-function currentTextColor() {
+const currentTextColor = computed(() => {
+  void editorStateTick.value
   const attrs = editor.value?.getAttributes('textStyle')
   return attrs?.color || ''
-}
+})
 
 
 // ── 工具栏下拉状态 ──
 const headingDropdownOpen = ref(false)
 const fontDropdownOpen = ref(false)
 const fontSizeDropdownOpen = ref(false)
+
+/** 手动响应式触发器：ProseMirror 内部状态（getAttributes/isActive）不受 Vue 追踪，
+ *  每次 transaction 或 selection 变更时自增，强制相关 computed 重新求值。 */
+const editorStateTick = ref(0)
 
 function closeAllPickers() {
   headingDropdownOpen.value = false
@@ -737,8 +769,12 @@ function closeDropdowns() { closeAllPickers() }
 // ── ProseMirror JSON 内容应用（原生格式，无 Markdown 转换）──
 
 // ── 同步保护（核心：防止初始化竞态清空 content） ──
-let syncing = false
+// syncDepth 计数器替换原 boolean syncing，防 async 嵌套调用竞态
+let syncing = false   // 保留旧名供外部引用兼容
+let syncDepth = 0
 let initialized = false
+/** IME 组合输入期间标记（compositionstart → compositionend），防止中途 emit 破坏输入法状态 */
+let isComposing = false
 
 /** 将纯文本字符偏移映射为 ProseMirror 文档位置（1-based） */
 function textOffsetToDocPos(ed: any, targetOffset: number): number {
@@ -806,7 +842,8 @@ async function recoverImageNodes(node: any) {
 async function applyContent(content: any) {
   const ed = editor.value
   if (!ed) return
-  syncing = true
+  syncing = true        // 旧名兼容（已改用 syncDepth）
+  syncDepth++
   try {
     if (content && typeof content === 'object' && content.type === 'doc') {
       // 预处理：恢复图片 data URL（从 localPath 重新生成）
@@ -822,7 +859,8 @@ async function applyContent(content: any) {
   } catch {
     ed.commands.setContent({ type: 'doc', content: [] })
   }
-  syncing = false
+  syncing = false       // 旧名兼容（已改用 syncDepth，嵌套调用安全）
+  syncDepth = Math.max(0, syncDepth - 1)
   extractHeadings(ed)
 }
 
@@ -836,6 +874,7 @@ const editor = useEditor({
       link: { openOnClick: false, HTMLAttributes: { class: 'text-blue-500 dark:text-blue-400 underline' } },
     }),
     Highlight.configure({ multicolor: true }),
+    Underline,
     TextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right', 'justify'] }),
     Table.configure({ resizable: true }),
     TableRow,
@@ -861,9 +900,12 @@ const editor = useEditor({
     })
   },
   onUpdate() {
+    editorStateTick.value++
+    // IME 组合输入期间跳过：避免中途 emit 破坏输入法 composition 状态
+    if (isComposing) return
     extractHeadings(editor.value)
     // ★ 核心保护：初始化期间 / 程序化同步期间，不 emit
-    if (!initialized || syncing) return
+    if (!initialized || syncDepth > 0) return
     const ed = editor.value
     if (!ed) return
 
@@ -883,11 +925,38 @@ const editor = useEditor({
       }
     }
   },
+  onSelectionUpdate() {
+    editorStateTick.value++
+    const ed = editor.value
+    if (!ed) return
+    const { from, to, empty } = ed.state.selection
+    const len = empty ? 0 : ed.state.doc.textBetween(from, to, '').length
+    emit('selection-change', len)
+  },
   editorProps: {
     attributes: {
       class: 'rich-editor-content',
     },
     handleDOMEvents: {
+      compositionstart: () => {
+        isComposing = true
+        return false
+      },
+      compositionend: () => {
+        isComposing = false
+        // IME 提交完毕 → 延迟一帧让 ProseMirror 完成内容写入后，补发同步
+        setTimeout(() => {
+          const ed = editor.value
+          if (!ed || !initialized || syncing) return
+          extractHeadings(ed)
+          const json = ed.getJSON()
+          const current = typeof props.modelValue === 'object' ? props.modelValue : null
+          if (JSON.stringify(json) !== JSON.stringify(current)) {
+            emit('update:modelValue', json)
+          }
+        }, 0)
+        return false
+      },
       keydown: (_view, event) => {
         const ke = event as KeyboardEvent
         // Ctrl+F / Ctrl+H：使用内置查找替换，阻止浏览器原生查找窗口
@@ -1158,6 +1227,7 @@ async function handleImagePaste(item: DataTransferItem) {
     const buf = await file.arrayBuffer()
     let ext = file.type.split('/')[1] || 'png'
     if (ext === 'jpeg') ext = 'jpg'
+    if (ext === 'svg+xml') ext = 'svg'
     const dir = await join(await appLocalDataDir(), 'images')
     const fileName = `img_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.${ext}`
     const filePath = await join(dir, fileName)
@@ -1380,7 +1450,7 @@ function btnClass(active: boolean) {
           class="rich-btn"
           @mousedown.prevent="toggleColorPicker"
           v-html="svg.textColor"
-          :style="{ color: currentTextColor() || undefined }"
+          :style="{ color: currentTextColor || undefined }"
         />
         <div
           v-if="colorPickerOpen"
@@ -1543,7 +1613,7 @@ function btnClass(active: boolean) {
 
       <!-- ── 文档工具 ── -->
       <button title="查找替换 Ctrl+F" class="rich-btn" :class="{ 'rich-btn-active': searchOpen }" @mousedown.prevent="toggleSearch" v-html="svg.search" />
-      <button title="打印文档" class="rich-btn" onclick="window.print()" v-html="svg.printer" />
+      <button title="打印文档" class="rich-btn" @click="printDocument" v-html="svg.printer" />
 
       <!-- ── 右侧：字体 / 字号 ── -->
       <div class="flex-1" />
@@ -1636,7 +1706,7 @@ function btnClass(active: boolean) {
           border: `1px solid ${tbBorder}`,
           width: '160px'
         }"
-        @input="doSearch"
+        @input="debouncedSearch"
         @keydown.enter="doSearch"
       />
       <input
@@ -1836,10 +1906,11 @@ function btnClass(active: boolean) {
 
 /* ── 编辑器内容区 ── */
 .rich-content .ProseMirror {
+  --apz: v-bind(pageZoom); /* 页面缩放因子：与 CSS 层字号和 mark 层 inline 字号联动 */
   min-height: 100%;
   padding: 1rem 1.5rem;
   outline: none;
-  font-size: calc(v-bind(bodyFontSizePt) * 1pt * v-bind(pageZoom));
+  font-size: calc(v-bind(bodyFontSizePt) * 1pt * var(--apz));
   font-family: v-bind(bodyFontFamily), 'Microsoft YaHei', sans-serif;
   line-height: v-bind(bodyLineHeight);
   text-align: justify;
@@ -1861,10 +1932,10 @@ function btnClass(active: boolean) {
   pointer-events: none;
   height: 0;
 }
-.rich-content .ProseMirror h1 { font-family: v-bind(h1FontFamily); font-size: calc(v-bind(h1FontSizePt) * 1pt * v-bind(pageZoom)); line-height: v-bind(h1LineHeight); font-weight: v-bind(h1FontWeight); margin: 0.67em 0; }
-.rich-content .ProseMirror h2 { font-family: v-bind(h2FontFamily); font-size: calc(v-bind(h2FontSizePt) * 1pt * v-bind(pageZoom)); line-height: v-bind(h2LineHeight); font-weight: v-bind(h2FontWeight); margin: 0.6em 0; }
-.rich-content .ProseMirror h3 { font-family: v-bind(h3FontFamily); font-size: calc(v-bind(h3FontSizePt) * 1pt * v-bind(pageZoom)); line-height: v-bind(h3LineHeight); font-weight: v-bind(h3FontWeight); margin: 0.5em 0; }
-.rich-content .ProseMirror h4 { font-family: v-bind(h4FontFamily); font-size: calc(v-bind(h4FontSizePt) * 1pt * v-bind(pageZoom)); line-height: v-bind(h4LineHeight); font-weight: v-bind(h4FontWeight); margin: 0.4em 0; }
+.rich-content .ProseMirror h1 { font-family: v-bind(h1FontFamily); font-size: calc(v-bind(h1FontSizePt) * 1pt * var(--apz)); line-height: v-bind(h1LineHeight); font-weight: v-bind(h1FontWeight); margin: 0.67em 0; }
+.rich-content .ProseMirror h2 { font-family: v-bind(h2FontFamily); font-size: calc(v-bind(h2FontSizePt) * 1pt * var(--apz)); line-height: v-bind(h2LineHeight); font-weight: v-bind(h2FontWeight); margin: 0.6em 0; }
+.rich-content .ProseMirror h3 { font-family: v-bind(h3FontFamily); font-size: calc(v-bind(h3FontSizePt) * 1pt * var(--apz)); line-height: v-bind(h3LineHeight); font-weight: v-bind(h3FontWeight); margin: 0.5em 0; }
+.rich-content .ProseMirror h4 { font-family: v-bind(h4FontFamily); font-size: calc(v-bind(h4FontSizePt) * 1pt * var(--apz)); line-height: v-bind(h4LineHeight); font-weight: v-bind(h4FontWeight); margin: 0.4em 0; }
 .rich-content .ProseMirror blockquote {
   border-left: 3px solid var(--ae-blockquote-border);
   padding-left: 1em;
