@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { textToDocJson } from "../utils/textToDocJson";
 import { markdownToDocJson } from "../utils/markdownToDocJson";
 import { useExportSettingsStore } from "./exportSettings";
+import type { Comment } from "../types/comment";
 import tutorialMd from "../assets/tutorial.md?raw";
 import pkg from "../../package.json";
 
@@ -136,27 +137,76 @@ export interface AIConfig {
 
 // ─── 工具函数 ────────────────────────────────────────────────
 
-/** 从 DB 加载 ProseMirror JSON 内容（兼容旧 markdown 格式自动转换） */
-function parseContent(raw: string | null | undefined): any {
-  if (!raw) return { type: "doc", content: [] }
+/** 解析结果：ProseMirror doc 节点（可能含 comments 顶层字段）+ 抽出的批注数组 */
+export interface ParseResult {
+  doc: any;
+  comments: Comment[];
+}
+
+/** 孤儿扫描结果：orphanIds + ghostIds */
+export interface SweepResult {
+  orphanIds: string[];
+  ghostIds: string[];
+}
+
+/**
+ * 从 DB 加载 ProseMirror JSON 内容（兼容旧 markdown 格式自动转换）。
+ *
+ * 批注存在 doc 节点顶层 `comments` 字段中（持久化格式）。
+ * 本函数把 doc 与 comments 一同解析，comments 数组同时返回供 store 顶层使用。
+ *
+ * 兼容：
+ *   - 旧 markdown 格式 → 转 doc（无批注）
+ *   - 老版本 doc JSON 无 comments 字段 → comments = []
+ *   - comments 字段为非数组 → 视为空（容错）
+ */
+function parseContent(raw: string | null | undefined): ParseResult {
+  const empty: ParseResult = { doc: { type: "doc", content: [] }, comments: [] };
+  if (!raw) return empty;
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && parsed.type === 'doc') {
-      return parsed
+      const rawComments = parsed.comments;
+      const comments: Comment[] = Array.isArray(rawComments) ? rawComments : [];
+      // 抽出 comments 字段，避免 doc 节点误把它当 ProseMirror 属性
+      const { comments: _ignored, ...rest } = parsed;
+      return { doc: rest, comments };
     }
   } catch {
     // JSON 解析失败，说明是旧 markdown 格式
   }
-  // 非 ProseMirror JSON → 按 markdown 规则转换为 doc
-  console.warn("[parseContent] 非 ProseMirror JSON 格式，自动转换为 doc:", raw.slice(0, 80))
-  return textToDocJson(raw)
+  // 非 ProseMirror JSON → 按 markdown 规则转换为 doc（无批注）
+  console.warn("[parseContent] 非 ProseMirror JSON 格式，自动转换为 doc:", raw.slice(0, 80));
+  return { doc: textToDocJson(raw), comments: [] };
 }
 
-/** 序列化内容用于存储：ProseMirror JSON 对象 → JSON 字符串 */
-function serializeContent(content: any): string {
-  if (content === null || content === undefined) return ''
-  if (typeof content === 'string') return content // 向后兼容（不应出现）
-  return JSON.stringify(content)
+/**
+ * 序列化内容用于存储：ProseMirror JSON 对象 + 批注数组 → JSON 字符串
+ *
+ * 批注作为 doc 顶层字段写入（docSchemaVersion 用于未来扩展兼容）。
+ * 传 null/undefined 视为空 doc。
+ */
+function serializeContent(content: any, comments: Comment[] = []): string {
+  if (content === null || content === undefined) return '';
+  if (typeof content === 'string') return content; // 向后兼容（不应出现）
+  return JSON.stringify({
+    ...content,
+    comments: comments ?? [],
+    docSchemaVersion: 1,
+  });
+}
+
+/** 简易 UUID v4 生成（替代 crypto.randomUUID 以兼容旧环境） */
+function genUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // 降级：手搓一个 v4 形态
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 function formatTimestamp(): string {
@@ -176,6 +226,13 @@ export const useDocumentStore = defineStore("document", () => {
   const currentContent = ref<any>({ type: "doc", content: [] });
   const draftLoaded = ref(false); // 标记草稿是否已从数据库恢复
 
+  // ── 批注状态 ──
+  // 单一真相源是 currentContent 顶层 comments 字段（与正文同生共死）；
+  // 此 ref 仅作为「派生视图」，方便组件读取/操作。W1 仅做骨架，W2 再加 UI。
+  const comments = ref<Comment[]>([]);
+  const hoveredCommentId = ref<string>(""); // hover 浮层用，W3 实现
+  const editingCommentId = ref<string>(""); // 文末列表内联编辑，W2 实现
+
   /** 是否为教程文档 */
   const isTutorialDoc = computed(() => currentTitle.value === TUTORIAL_TITLE);
 
@@ -191,6 +248,17 @@ export const useDocumentStore = defineStore("document", () => {
   // ── 文件夹状态 ──
   const folders = ref<Folder[]>([]);
   const currentFolderFilter = ref<string>("all"); // "all" | folder_id
+
+  // ── 批注助手 ──
+  /**
+   * 统一处理 parseContent 结果：把 doc 设到 currentContent，comments 同步到 ref。
+   * 所有读 doc 入口（switchDocument / loadVersionContent / rollbackToVersion /
+   * exitHistoryView）都应通过本函数设置，避免遗漏 comments 同步。
+   */
+  function applyParsed(result: ParseResult) {
+    currentContent.value = result.doc;
+    comments.value = result.comments;
+  }
 
   // ── 计算：筛选后的文档列表 ──
   const filteredDocuments = computed(() => {
@@ -316,7 +384,7 @@ export const useDocumentStore = defineStore("document", () => {
       try {
         await invoke("save_draft", {
           docId: currentDocId.value,
-          content: serializeContent(newVal),
+          content: serializeContent(newVal, comments.value),
         });
         draftSaveStatus.value = "saved";
         const now = new Date();
@@ -498,11 +566,11 @@ export const useDocumentStore = defineStore("document", () => {
       // 先尝试恢复草稿内容
       const draft = await invoke<string | null>("get_draft", { docId });
       if (draft) {
-        currentContent.value = parseContent(draft);
+        applyParsed(parseContent(draft));
       } else {
         // 没有草稿，获取最新版本内容
         const list = await invoke<Version[]>("get_versions", { docId });
-        currentContent.value = parseContent(list.length > 0 ? list[list.length - 1].content : null);
+        applyParsed(parseContent(list.length > 0 ? list[list.length - 1].content : null));
       }
 
       await loadVersions();
@@ -564,7 +632,7 @@ export const useDocumentStore = defineStore("document", () => {
       const msg = commitMsg?.trim() || formatTimestamp();
       await invoke<Version>("commit_version", {
         docId: currentDocId.value,
-        content: serializeContent(currentContent.value),
+        content: serializeContent(currentContent.value, comments.value),
         commitMsg: msg,
       });
       // 提交后清除草稿（内容已保存为版本）
@@ -599,7 +667,7 @@ export const useDocumentStore = defineStore("document", () => {
       const version = await invoke<Version>("get_version", { versionId });
       // 防止快速切换文档导致版本内容错配到非所属文档
       if (version.doc_id !== currentDocId.value) return;
-      currentContent.value = parseContent(version.content);
+      applyParsed(parseContent(version.content));
       viewingVersionId.value = versionId;
       loadDocumentScore();
     }).catch((err) => { error.value = String(err); });
@@ -638,16 +706,17 @@ export const useDocumentStore = defineStore("document", () => {
         docId: currentDocId.value,
       });
       if (draft) {
-        currentContent.value = parseContent(draft);
+        applyParsed(parseContent(draft));
       } else {
         // 没有草稿时回退到最新版本内容
         const vs = await invoke<Version[]>("get_versions", {
           docId: currentDocId.value,
         });
         if (vs.length > 0) {
-          currentContent.value = parseContent(vs[vs.length - 1].content);
+          applyParsed(parseContent(vs[vs.length - 1].content));
         } else {
           currentContent.value = { type: "doc", content: [] };
+          comments.value = [];
         }
       }
       viewingVersionId.value = "";
@@ -661,14 +730,103 @@ export const useDocumentStore = defineStore("document", () => {
     await withSuppressDraftSave(async () => {
       const version = await invoke<Version>("get_version", { versionId });
       const parsed = parseContent(version.content);
-      currentContent.value = parsed;
+      applyParsed(parsed);
       viewingVersionId.value = "";
       // 立即保存为草稿（保证后续编辑基于此版本）
       await invoke("save_draft", {
         docId: currentDocId.value,
-        content: serializeContent(parsed),
+        content: serializeContent(parsed.doc, parsed.comments),
       });
     }).catch((err) => { error.value = String(err); });
+  }
+
+  // ── 批注操作（W1 骨架，W2 接 mark + UI） ────────────────────
+
+  /** 下一个 order 号（基于现有最大 order + 1；删除不回收） */
+  const nextCommentOrder = computed(() => {
+    if (comments.value.length === 0) return 1;
+    return Math.max(...comments.value.map((c) => c.order)) + 1;
+  });
+
+  /**
+   * 新建一条批注（W1 仅写 comments 数组；W2 再把 mark 加到 ProseMirror 选区）。
+   * 重复插入同一条（按 text + 极近时间容错）暂不处理，留给 W2 合并。
+   */
+  function addComment(text: string): Comment {
+    const now = new Date().toISOString();
+    const c: Comment = {
+      id: genUuid(),
+      order: nextCommentOrder.value,
+      text,
+      createdAt: now,
+      updatedAt: now,
+      author: "我",
+      orphan: false,
+    };
+    comments.value = [...comments.value, c];
+    return c;
+  }
+
+  /** 更新批注文本（仅限前 500 字） */
+  function updateCommentText(id: string, text: string) {
+    const trimmed = text.slice(0, 500);
+    const now = new Date().toISOString();
+    comments.value = comments.value.map((c) =>
+      c.id === id ? { ...c, text: trimmed, updatedAt: now } : c,
+    );
+  }
+
+  /** 删除一条批注（W1 仅从数组移除；W2 再移除对应 mark） */
+  function deleteComment(id: string) {
+    comments.value = comments.value.filter((c) => c.id !== id);
+  }
+
+  /**
+   * 扫描 doc 中实际存在的 comment mark id 集合。
+   * W2 改用 ProseMirror doc.descendants；W1 先用基于 JSON 的遍历（兼容）。
+   */
+  function collectLiveCommentIds(): Set<string> {
+    const ids = new Set<string>();
+    const walk = (node: any) => {
+      if (!node) return;
+      if (Array.isArray(node.marks)) {
+        for (const m of node.marks) {
+          if (m && m.type === "comment" && m.attrs?.commentId) {
+            ids.add(m.attrs.commentId);
+          }
+        }
+      }
+      if (Array.isArray(node.content)) node.content.forEach(walk);
+    };
+    walk(currentContent.value);
+    return ids;
+  }
+
+  /**
+   * 孤儿扫描：把 mark 范围已消失的 comment 标 orphan，并把 mark 引用了
+   * 不在 comments 中的"幽灵 mark"上报（由 RichEditor 清理）。
+   * 应在 doc 变化后由调用方触发（nextTick）。
+   */
+  function sweepOrphans(): SweepResult {
+    const live = collectLiveCommentIds();
+    const orphanIds: string[] = [];
+    let commentsChanged = false;
+    comments.value = comments.value.map((c) => {
+      if (!c.orphan && !live.has(c.id)) {
+        orphanIds.push(c.id);
+        commentsChanged = true;
+        return { ...c, orphan: true };
+      }
+      return c;
+    });
+    // 幽灵 mark：doc 引用了、comments 没有（删除批注后未及时清 mark 的情况）
+    const commentIdSet = new Set(comments.value.map((c) => c.id));
+    const ghostIds: string[] = [];
+    for (const id of live) {
+      if (!commentIdSet.has(id)) ghostIds.push(id);
+    }
+    void commentsChanged; // 由 Vue 自动追踪
+    return { orphanIds, ghostIds };
   }
 
   /** 获取 Diff 对比结果 */
@@ -774,7 +932,7 @@ export const useDocumentStore = defineStore("document", () => {
     try {
       const result = await invoke<DocumentScore>("score_document", {
         contextKey: key,
-        content: serializeContent(currentContent.value),
+        content: serializeContent(currentContent.value, comments.value),
         title: currentTitle.value,
       });
       documentScores.value[key] = result;
@@ -809,6 +967,9 @@ export const useDocumentStore = defineStore("document", () => {
     currentDocId.value = "";
     currentTitle.value = "新文档";
     currentContent.value = { type: "doc", content: [] };
+    comments.value = [];
+    hoveredCommentId.value = "";
+    editingCommentId.value = "";
     versions.value = [];
     selectedOldVersionId.value = "";
     selectedNewVersionId.value = "";
@@ -845,6 +1006,11 @@ export const useDocumentStore = defineStore("document", () => {
     draftSaveStatus,
     lastSaveTime,
     injectedChatText,
+    // 批注（W1 骨架）
+    comments,
+    hoveredCommentId,
+    editingCommentId,
+    nextCommentOrder,
     // 计算
     hasSelectedVersions,
     canDiff,
@@ -880,6 +1046,12 @@ export const useDocumentStore = defineStore("document", () => {
     loadApiConfig,
     saveApiConfig,
     testApiConnection,
+    // 批注操作（W1 骨架）
+    addComment,
+    updateCommentText,
+    deleteComment,
+    sweepOrphans,
+    collectLiveCommentIds,
     reset,
   };
 });

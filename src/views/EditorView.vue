@@ -60,6 +60,7 @@ const {
   filteredDocuments,
   draftSaveStatus,
   lastSaveTime,
+  comments,
 } = storeToRefs(store);
 
 // ── AI 状态标签 ──
@@ -311,7 +312,11 @@ watch(leftSubTab, async (_newTab, oldTab) => {
     try {
       await invoke("save_draft", {
         docId: store.currentDocId,
-        content: JSON.stringify(currentContent.value),
+        content: JSON.stringify({
+          ...currentContent.value,
+          comments: comments.value ?? [],
+          docSchemaVersion: 1,
+        }),
       });
     } catch { /* 忽略 */ }
   }
@@ -1211,7 +1216,11 @@ async function tryExit() {
     try {
       await invoke("save_draft", {
         docId: store.currentDocId,
-        content: JSON.stringify(currentContent.value),
+        content: JSON.stringify({
+          ...currentContent.value,
+          comments: comments.value ?? [],
+          docSchemaVersion: 1,
+        }),
       });
     } catch { /* 忽略保存错误 */ }
   }
@@ -1354,7 +1363,12 @@ async function handleMoveDoc() {
 
 async function handleExportWord() {
   if (!currentContent.value) return;
-  await exportToWord(JSON.stringify(currentContent.value), currentTitle.value, exportSettingsStore.settings);
+  const contentWithComments = JSON.stringify({
+    ...currentContent.value,
+    comments: comments.value ?? [],
+    docSchemaVersion: 1,
+  });
+  await exportToWord(contentWithComments, currentTitle.value, exportSettingsStore.settings);
 }
 
 </script>

@@ -57,7 +57,7 @@ const labelSm = 'text-[10px] text-gray-400 dark:text-gray-500 shrink-0';
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md"
       @click.self="cancel"
     >
-      <div class="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl shadow-2xl w-[560px] max-h-[80vh] overflow-hidden flex flex-col">
+      <div class="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl shadow-2xl w-[560px]">
         <!-- 标题栏 -->
         <div class="flex items-center justify-between px-5 py-3 border-b border-gray-300 dark:border-gray-700">
           <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">导出 Word 设置</h3>
@@ -68,7 +68,7 @@ const labelSm = 'text-[10px] text-gray-400 dark:text-gray-500 shrink-0';
         </div>
 
         <!-- 内容区 -->
-        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        <div class="px-5 py-3 space-y-3">
           <!-- 字体设置 -->
           <section>
             <h4 class="text-xs font-semibold text-blue-400 dark:text-blue-300 mb-3 uppercase tracking-wider">字体</h4>
@@ -305,6 +305,19 @@ const labelSm = 'text-[10px] text-gray-400 dark:text-gray-500 shrink-0';
                 />
               </label>
             </div>
+          </section>
+
+          <!-- 其他选项 -->
+          <section>
+            <h4 class="text-xs font-semibold text-blue-400 dark:text-blue-300 mb-3 uppercase tracking-wider">其他选项</h4>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="local.includeComments" class="sr-only" />
+              <span class="w-8 h-5 rounded-full transition-colors inline-flex items-center px-0.5" :class="local.includeComments ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'">
+                <span class="w-3 h-3 bg-white rounded-full transition-transform" :class="local.includeComments ? 'translate-x-4' : 'translate-x-0'" />
+              </span>
+              <span class="text-[11px] text-gray-600 dark:text-gray-400">导出批注</span>
+              <span class="text-[10px] text-gray-400 dark:text-gray-500">（勾选后批注将以角标+文末列表形式导出）</span>
+            </label>
           </section>
         </div>
 

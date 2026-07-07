@@ -58,6 +58,8 @@ export interface ExportSettings {
   cellMarginBottom: number;
   cellMarginLeft: number;
   cellMarginRight: number;
+  /** 是否导出批注（附在文末） */
+  includeComments: boolean;
 }
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
@@ -89,6 +91,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   cellMarginBottom: 1.5,
   cellMarginLeft: 1.5,
   cellMarginRight: 1.5,
+  includeComments: true,
 };
 
 function ptToHalfPt(pt: number): number { return pt * 2; }
@@ -108,23 +111,54 @@ interface PMMark {
   attrs?: Record<string, any>;
 }
 
+// ── 批注条目（与 src/types/comment.ts 保持一致；这里独立定义避免循环依赖） ──
+interface ExportComment {
+  id: string;
+  order: number;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+  author: string;
+  orphan: boolean;
+}
+
+interface ParsedDoc {
+  doc: PMNode;
+  comments: ExportComment[];
+}
+
+/** 当前导出会话使用的 comment 映射（由 buildDocx 入口设置，避免重写所有函数签名） */
+let _currentCommentMap: Map<string, ExportComment> = new Map();
+
 // ── 解析 ProseMirror JSON ─────────────────────────────────
-function parseContent(raw: string): PMNode | null {
-  if (!raw) return null;
+function parseContent(raw: string): ParsedDoc {
+  const empty: ParsedDoc = { doc: { type: "doc", content: [] }, comments: [] };
+  if (!raw) return empty;
   try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && parsed.type === 'doc') {
-      return parsed as PMNode;
+      const rawComments = parsed.comments;
+      const comments: ExportComment[] = Array.isArray(rawComments) ? rawComments : [];
+      const { comments: _ignored, ...rest } = parsed;
+      return { doc: rest as PMNode, comments };
     }
   } catch { /* 非 JSON */ }
   // 回退：旧版纯文本 → 包裹为 ProseMirror doc
   return raw
-    ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: raw }] }] }
-    : { type: "doc", content: [] };
+    ? {
+        doc: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: raw }] }] },
+        comments: [],
+      }
+    : empty;
 }
 
 // ── 内联文本解析（应用 marks → TextRun） ─────────────────
-function buildTextRuns(node: PMNode, settings: ExportSettings, defaultFont: string, defaultSize: number): TextRun[] {
+function buildTextRuns(
+  node: PMNode,
+  settings: ExportSettings,
+  defaultFont: string,
+  defaultSize: number,
+): TextRun[] {
   // 文本节点
   if (node.type === 'text') {
     let bold = false;
@@ -139,6 +173,9 @@ function buildTextRuns(node: PMNode, settings: ExportSettings, defaultFont: stri
 
     let superscript = false;
     let subscript = false;
+
+    // 同一文本节点可能挂多个 comment mark（极少见），用 order 去重收集
+    const commentOrderToAdd: number[] = [];
 
     if (node.marks) {
       for (const m of node.marks) {
@@ -157,11 +194,21 @@ function buildTextRuns(node: PMNode, settings: ExportSettings, defaultFont: stri
             if (m.attrs?.fontFamily) fontFamily = m.attrs.fontFamily;
             break;
           case 'highlight': break; // Word 不支持高亮，忽略
+          case 'comment': {
+            if (settings.includeComments === false) break;
+            const id = m.attrs?.commentId;
+            if (id) {
+              const c = _currentCommentMap.get(id);
+              if (c && !c.orphan) commentOrderToAdd.push(c.order);
+            }
+            break;
+          }
         }
       }
     }
 
-    return [new TextRun({
+    const runs: TextRun[] = [];
+    runs.push(new TextRun({
       text: node.text || '',
       font: code ? 'Consolas' : (fontFamily || defaultFont),
       size: ptToHalfPt(fontSize || defaultSize),
@@ -173,7 +220,18 @@ function buildTextRuns(node: PMNode, settings: ExportSettings, defaultFont: stri
       superScript: superscript || undefined,
       subScript: subscript || undefined,
       ...(href ? { style: 'Hyperlink' } : {}), // 简化：Word 链接需要单独处理
-    })];
+    }));
+    // 角标：每个 comment order 一个 sup
+    for (const order of commentOrderToAdd) {
+      runs.push(new TextRun({
+        text: `[${order}]`,
+        font: defaultFont,
+        size: ptToHalfPt(16),
+        color: "000000",
+        superScript: true,
+      }));
+    }
+    return runs;
   }
 
   // 容器节点（如 paragraph heading 等）→ 递归
@@ -211,7 +269,12 @@ function parseLineHeightSpacing(lineHeight: string | undefined, defaultSpacing: 
 }
 
 // ── 遍历 ProseMirror 节点构建 docx 元素 ─────────────────
-async function buildDocx(doc: PMNode | null, settings: ExportSettings): Promise<Document> {
+async function buildDocx(parsed: ParsedDoc, settings: ExportSettings): Promise<Document> {
+  const { doc, comments } = parsed;
+  // 同步当前 comment 映射给 buildTextRuns 读取
+  _currentCommentMap = new Map();
+  for (const c of comments) _currentCommentMap.set(c.id, c);
+
   if (!doc || doc.type !== 'doc') {
     return new Document({ sections: [{ properties: {}, children: [] }] });
   }
@@ -238,6 +301,58 @@ async function buildDocx(doc: PMNode | null, settings: ExportSettings): Promise<
 
   for (const node of doc.content || []) {
     await appendNode(node, children, settings, bodySpacing, bodyWidthTwip, tblBorder);
+  }
+
+  // ── 文末批注列表（按 order 排序） ──
+  if (settings.includeComments !== false && comments.length > 0) {
+    // 段落分隔
+    children.push(new Paragraph({
+      children: [new TextRun({ text: '' })],
+      spacing: { before: 200, after: 0 },
+    }));
+    // 标题
+    children.push(new Paragraph({
+      children: [new TextRun({
+        text: '批注',
+        font: settings.fontH2,
+        size: ptToHalfPt(settings.sizeH2),
+        bold: true,
+      })],
+      alignment: AlignmentType.CENTER,
+    }));
+    const sorted = [...comments].sort((a, b) => a.order - b.order);
+    for (const c of sorted) {
+      const isOrphan = c.orphan;
+      children.push(new Paragraph({
+        children: [
+          new TextRun({
+            text: `[${c.order}] `,
+            font: "方正仿宋简体",
+            size: ptToHalfPt(settings.sizeBody),
+            color: "000000",
+          }),
+          new TextRun({
+            text: c.text,
+            font: settings.fontBody,
+            size: ptToHalfPt(settings.sizeBody),
+            color: isOrphan ? '9CA3AF' : undefined,
+            italics: isOrphan || undefined,
+          }),
+          isOrphan
+            ? new TextRun({
+                text: '  （原文已删除）',
+                font: settings.fontBody,
+                size: ptToHalfPt(settings.sizeBody * 0.9),
+                color: 'DC2626',
+                italics: true,
+              })
+            : new TextRun({ text: '' }),
+        ].filter(r => r.text !== ''),
+        alignment: AlignmentType.JUSTIFIED,
+        spacing: { before: 0, after: 0, line: ptToTwip(28), lineRule: 'exact' },
+        indent: { firstLineChars: 200 },
+      }));
+    }
   }
 
   return new Document({
@@ -749,8 +864,8 @@ export async function exportToWord(
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
 ) {
   try {
-    const doc = parseContent(content);
-    const docxDoc = await buildDocx(doc, settings);
+    const parsed = parseContent(content);
+    const docxDoc = await buildDocx(parsed, settings);
     const rawBlob = await Packer.toBlob(docxDoc);
     const rawBuf = await rawBlob.arrayBuffer();
     const fixedBlob = await postProcessDocx(rawBuf, settings);

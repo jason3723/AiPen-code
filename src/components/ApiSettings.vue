@@ -132,11 +132,73 @@ async function handleQueryBalance() {
 
 // ── 数据管理 ──
 
+/**
+ * 简化版 semver 比较：返回 -1/0/1
+ *  - compareVersion("2.0.0", "2.0.0") === 0
+ *  - compareVersion("1.5.0", "2.0.0") === -1
+ *  - compareVersion("3.0.0", "2.0.0") === 1
+ * 容忍段数不一致：缺失段按 0 补
+ */
+function compareVersion(a: string, b: string): number {
+  const pa = a.split(".").map(s => parseInt(s, 10) || 0);
+  const pb = b.split(".").map(s => parseInt(s, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x < y) return -1;
+    if (x > y) return 1;
+  }
+  return 0;
+}
+
+
+
+/**
+ * 扫描 ProseMirror doc 字符串，统计批注数量与孤儿数。
+ *  - 提取顶层 `comments` 数组
+ *  - 提取 doc 中实际引用（mark attr.commentId）
+ */
+function scanDocComments(raw: string): { total: number; orphan: number } {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.type !== 'doc') return { total: 0, orphan: 0 };
+    const live = new Set<string>();
+    const walk = (node: any) => {
+      if (Array.isArray(node?.marks)) {
+        for (const m of node.marks) {
+          if (m?.type === 'comment' && m.attrs?.commentId) live.add(m.attrs.commentId);
+        }
+      }
+      if (Array.isArray(node?.content)) node.content.forEach(walk);
+    };
+    walk(parsed);
+    const comments: any[] = Array.isArray(parsed.comments) ? parsed.comments : [];
+    const orphan = comments.filter(c => !live.has(c.id)).length;
+    return { total: comments.length, orphan };
+  } catch {
+    return { total: 0, orphan: 0 };
+  }
+}
+
+interface ExportMetadata {
+  /** 此备份包含批注数据 */
+  contains_comments: boolean;
+  /** 总批注条数 */
+  comment_count: number;
+  /** 孤儿批注条数（原文已删除） */
+  orphan_comment_count: number;
+  /** 导出此备份的 AiPen 版本 */
+  exported_by_version: string;
+  /** 最低兼容的 AiPen 阅读版本（导入端低于此版本将提示批注丢失） */
+  min_reader_version: string;
+}
+
 async function handleExport() {
   exporting.value = true;
   backupResult.value = null;
   try {
-    const data = await invoke("export_selected_data", {
+    const data: any = await invoke("export_selected_data", {
       exportDocuments: exportSelections.value.documents,
       exportKnowledgeBases: exportSelections.value.knowledge_bases,
       exportMaterials: exportSelections.value.materials,
@@ -144,6 +206,35 @@ async function handleExport() {
       exportInterviewPrompts: exportSelections.value.interview_prompts,
       exportComposeRecipes: exportSelections.value.compose_recipes,
     });
+    // 扫描所有 doc/版本的批注
+    let totalComments = 0;
+    let orphanComments = 0;
+    if (Array.isArray(data?.documents)) {
+      for (const d of data.documents) {
+        if (d.draft_content) {
+          const s = scanDocComments(d.draft_content);
+          totalComments += s.total;
+          orphanComments += s.orphan;
+        }
+        if (Array.isArray(d.versions)) {
+          for (const v of d.versions) {
+            if (v.content) {
+              const s = scanDocComments(v.content);
+              totalComments += s.total;
+              orphanComments += s.orphan;
+            }
+          }
+        }
+      }
+    }
+    const meta: ExportMetadata = {
+      contains_comments: totalComments > 0,
+      comment_count: totalComments,
+      orphan_comment_count: orphanComments,
+      exported_by_version: pkg.version,
+      min_reader_version: "2.0.0", // 批注功能自此版本起
+    };
+    (data as any)._meta = meta;
     const json = JSON.stringify(data, null, 2);
     const filePath = await save({
       defaultPath: `AiPen_backup_${new Date().toISOString().slice(0, 10)}_${String(new Date().getHours()).padStart(2, "0")}${String(new Date().getMinutes()).padStart(2, "0")}.aipen`,
@@ -151,7 +242,8 @@ async function handleExport() {
     });
     if (!filePath) return;
     await writeTextFile(filePath, json);
-    showBackupResult({ type: "success", message: `已导出到 ${filePath}` });
+    const extra = totalComments > 0 ? `（含 ${totalComments} 条批注${orphanComments > 0 ? `，${orphanComments} 条孤儿` : ""}）` : "";
+    showBackupResult({ type: "success", message: `已导出到 ${filePath} ${extra}` });
   } catch (err) {
     showBackupResult({ type: "failure", message: String(err) });
   } finally {
@@ -170,6 +262,17 @@ async function handleImport() {
     if (!filePath) return;
     const filePathStr = typeof filePath === "string" ? filePath : (filePath as { path: string }).path;
     const json = await readTextFile(filePathStr);
+
+    // 解析元数据，若包含批注但当前版本不支持 → 警告
+    let metaWarning = "";
+    try {
+      const parsed = JSON.parse(json);
+      const meta = parsed?._meta as ExportMetadata | undefined;
+      if (meta?.contains_comments && compareVersion(pkg.version, meta.min_reader_version) < 0) {
+        metaWarning = `\n⚠ 此备份含 ${meta.comment_count} 条批注，当前版本 ${pkg.version} 低于最低兼容 ${meta.min_reader_version}，批注将丢失。`;
+      }
+    } catch { /* 解析失败时不强提示，让后端报错 */ }
+
     const stats = await invoke<{ document_count: number; knowledge_base_count: number; material_count: number; skill_count: number; interview_prompt_count: number; compose_recipe_count: number; folder_count: number }>(
       "import_data",
       { dataJson: json }
@@ -193,7 +296,7 @@ async function handleImport() {
     if ((stats.folder_count ?? 0) > 0) parts.push(`${stats.folder_count} 个文件夹`);
     showBackupResult({
       type: "success",
-      message: `导入完成：${parts.join("、")}（已存在的已跳过）`,
+      message: `导入完成：${parts.join("、")}（已存在的已跳过）${metaWarning}`,
     });
     // 重新加载素材并触发迁移（处理可能导入的旧格式纯文本素材）
     if (stats.material_count > 0) {
@@ -502,15 +605,16 @@ const appVersion = pkg.version;
       <div class="grid grid-cols-3 gap-2 mb-3">
         <button
           v-for="item in [
-            { key: 'documents' as const, label: '文档' },
-            { key: 'knowledge_bases' as const, label: '知识库' },
-            { key: 'materials' as const, label: '素材' },
-            { key: 'skills' as const, label: '技能' },
-            { key: 'interview_prompts' as const, label: '采访提示' },
-            { key: 'compose_recipes' as const, label: '写作' },
+            { key: 'documents' as const, label: '文档', title: '含草稿与所有版本。批注作为 doc 内部 JSON 字段随文档自动包含，无需单独勾选。' },
+            { key: 'knowledge_bases' as const, label: '知识库', title: '' },
+            { key: 'materials' as const, label: '素材', title: '' },
+            { key: 'skills' as const, label: '技能', title: '' },
+            { key: 'interview_prompts' as const, label: '采访提示', title: '' },
+            { key: 'compose_recipes' as const, label: '写作', title: '' },
           ]"
           :key="item.key"
           type="button"
+          :title="item.title || undefined"
           class="inline-flex items-center justify-center px-1 py-[6px] text-[10px] leading-none rounded-md cursor-pointer select-none transition-all duration-150 whitespace-nowrap border"
           :class="exportSelections[item.key]
             ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-500/40 font-medium'
@@ -539,7 +643,7 @@ const appVersion = pkg.version;
         </button>
       </div>
 
-      <p class="text-[11px] text-gray-500 dark:text-gray-600 pl-0.5">增量导入 · 不含密钥</p>
+      <p class="text-[11px] text-gray-500 dark:text-gray-600 pl-0.5">增量导入 · 不含密钥 · 批注随文档/版本自动包含</p>
 
       <!-- 备份结果 -->
       <div

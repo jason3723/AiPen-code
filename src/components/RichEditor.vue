@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, computed, nextTick } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
+import * as Vue from 'vue'
+import CommentInputBar from './CommentInputBar.vue'
+import CommentListPanel from './CommentListPanel.vue'
+import CommentTooltip from './CommentTooltip.vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { Mark, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
@@ -39,6 +43,162 @@ const DiffHighlight = Mark.create({
   },
   renderHTML() {
     return ['span', { class: 'diff-change-highlight' }, 0]
+  },
+})
+
+/**
+ * 自定义 Mark：批注（comment）。
+ *  - 仅挂 commentId（不含 text），text 存到 store 顶层的 comments 数组中
+ *  - 不渲染到 HTML：避免复制粘贴泄漏 + 避免从外部粘贴回来的 span 被错误识别
+ *  - inclusive: false 防止光标在 mark 边界时被"吸入"mark 内
+ *  - spanning: true 允许跨多个 inline 节点（加粗/斜体内等场景）
+ */
+const CommentMark = Mark.create({
+  name: 'comment',
+  inclusive: false,
+  spanning: true,
+  excludable: true,
+
+  addAttributes() {
+    return {
+      commentId: {
+        // 用空串作为 default，避免 null 时 ProseMirror 跳过 wrapper
+        default: '',
+        // 从 HTML 反序列化时跳过（避免外部复制粘贴泄漏）
+        parseHTML: () => '',
+        // 渲染时把真实 id 写回 data-comment-id（仅供视图层 hover 定位）
+        renderHTML: (attrs) => ({ 'data-comment-id': attrs.commentId ?? '' }),
+      },
+    }
+  },
+
+  parseHTML() {
+    // 不解析外部 HTML 里的 comment span
+    return []
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    // class 强制为 comment-mark，确保 CSS 选择器命中
+    return ['span', { ...HTMLAttributes, class: 'comment-mark' }, 0]
+  },
+
+  addCommands() {
+    return {
+      setComment: (commentId: string) => ({ commands }: { commands: any }) =>
+        commands.setMark(this.name, { commentId }),
+      unsetComment: (commentId?: string) => ({ tr, state, dispatch }: any) => {
+        // 默认：移除选区内所有 comment mark
+        // 指定 commentId：仅移除该 id（用于 deleteComment 流程）
+        const markType = state.schema.marks[this.name]
+        if (!markType) return false
+        if (commentId) {
+          // 遍历整个 doc，移除所有 attr.commentId === commentId 的 mark
+          const tr2 = state.tr
+          state.doc.descendants((node: any, pos: number) => {
+            node.marks.forEach((m: any) => {
+              if (m.type === markType && m.attrs.commentId === commentId) {
+                tr2.removeMark(pos, pos + node.nodeSize, markType)
+              }
+            })
+          })
+          if (tr2.docChanged && dispatch) dispatch(tr2)
+          return tr2.docChanged
+        }
+        return false
+      },
+    }
+  },
+})
+
+/**
+ * 角标 [n] 渲染插件：
+ *  - 在每段带 comment mark 的文字末尾追加 sup 角标
+ *  - 角标文本从 commentMap（id -> order）动态查得
+ *  - 角标装饰不写回 doc JSON
+ *  - 由 RichEditor 在 store.comments 变化时通过 meta 触发重建
+ */
+import type { EditorState } from 'prosemirror-state'
+import type { EditorView } from 'prosemirror-view'
+
+const commentBadgePluginKey = new PluginKey('commentBadge')
+
+interface CommentBadgeMeta {
+  /** commentId -> { order, orphan } */
+  map: Map<string, { order: number; orphan: boolean }>
+}
+
+/** 构造装饰：根据当前 doc + commentMap 在每个 comment mark 范围末尾追加 sup 角标 */
+function buildCommentDecorations(
+  state: EditorState,
+  map: Map<string, { order: number; orphan: boolean }>,
+): Decoration[] {
+  const decos: Decoration[] = []
+  state.doc.descendants((node, pos) => {
+    if (!node.marks) return
+    for (const mark of node.marks) {
+      if (mark.type.name !== 'comment') continue
+      const id = mark.attrs?.commentId
+      if (!id) continue
+      const meta = map.get(id)
+      if (!meta || meta.orphan) continue
+      const endPos = pos + node.nodeSize
+      decos.push(
+        Decoration.widget(
+          endPos,
+          () => {
+            const el = document.createElement('sup')
+            el.className = 'comment-badge'
+            el.textContent = `[${meta.order}]`
+            el.setAttribute('data-comment-id', id)
+            el.contentEditable = 'false'
+            return el
+          },
+          { side: 1, key: `comment-badge-${id}-${endPos}` },
+        ),
+      )
+    }
+  })
+  return decos
+}
+
+/**
+ * 角标渲染 Extension：在 addProseMirrorPlugins 中注入 ProseMirror 插件。
+ * map 通过 meta('commentMap', { map }) 传入；doc 变化或 meta 变化都触发重建。
+ */
+const CommentBadgeExt = Extension.create({
+  name: 'commentBadge',
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: commentBadgePluginKey,
+        state: {
+          init: (_, state) => {
+            // 初始 map 为空，由 RichEditor 首次 dispatch 注入
+            return DecorationSet.create(state.doc, [])
+          },
+          apply(tr, oldSet, oldState, newState) {
+            const meta = tr.getMeta(commentBadgePluginKey) as CommentBadgeMeta | undefined
+            if (meta) {
+              return DecorationSet.create(newState.doc, buildCommentDecorations(newState, meta.map))
+            }
+            if (tr.docChanged) {
+              // doc 变化时用同一 map 重建（map 通过最新 dispatch 注入）
+              const currentMap = (newState as any).__commentMap as Map<string, { order: number; orphan: boolean }> | undefined
+              if (currentMap) {
+                return DecorationSet.create(newState.doc, buildCommentDecorations(newState, currentMap))
+              }
+            }
+            return oldSet
+          },
+        },
+        props: {
+          decorations(state) {
+            return commentBadgePluginKey.getState(state) ?? DecorationSet.empty
+          },
+        },
+      }),
+    ]
   },
 })
 
@@ -675,6 +835,24 @@ function editorSmartMenuPos(cursorX: number, cursorY: number, menuW: number, men
   return { x, y }
 }
 
+/** 居中定位版：anchor 为浮层水平中心，浮层宽度 menuW，自动避左右 + 上下 */
+function editorSmartMenuPosCenter(
+  anchorX: number, anchorYBottom: number, menuW: number, menuH: number,
+) {
+  const MARGIN = 8
+  // 水平：让浮层中心对齐 anchorX；左溢出贴 MARGIN，右溢出贴 innerWidth - menuW - MARGIN
+  let left = anchorX - menuW / 2
+  if (left < MARGIN) left = MARGIN
+  if (left + menuW + MARGIN > window.innerWidth) left = window.innerWidth - menuW - MARGIN
+  // 垂直：默认放在 anchor 下方 6px；下方空间不够则翻到上方
+  let top = anchorYBottom + 6
+  if (top + menuH + MARGIN > window.innerHeight) {
+    top = anchorYBottom - menuH - 6 - 32 // 32 = 工具栏估计高度补偿
+    if (top < MARGIN) top = MARGIN
+  }
+  return { top, left }
+}
+
 function closeCtxMenu() { ctxMenuShow.value = false }
 
 async function execCtxMenuCut() {
@@ -717,6 +895,11 @@ function execCtxMenuAddToChat() {
   docStore.injectedChatText = ctxMenuSelText.value
   docStore.sidebarTab = 'chat'
   closeCtxMenu()
+}
+function execCtxMenuAddComment() {
+  closeCtxMenu()
+  // 延迟一帧让菜单关闭动画完成
+  nextTick(() => execComment())
 }
 function execCtxMenuAddToCandidate() {
   if (!ctxMenuSelText.value) return
@@ -768,6 +951,43 @@ const fontSizeDropdownOpen = ref(false)
 /** 手动响应式触发器：ProseMirror 内部状态（getAttributes/isActive）不受 Vue 追踪，
  *  每次 transaction 或 selection 变更时自增，强制相关 computed 重新求值。 */
 const editorStateTick = ref(0)
+
+// ── 批注：监听 store.comments 变化，刷新角标装饰 + 清理 ghost mark ──
+Vue.watch(
+  () => docStore.comments,
+  (list) => {
+    const ed = editor.value
+    if (!ed) return
+    // 1. 刷新装饰
+    const map = new Map<string, { order: number; orphan: boolean }>()
+    for (const c of list) map.set(c.id, { order: c.order, orphan: c.orphan })
+    ed.view.dispatch(
+      ed.state.tr.setMeta(commentBadgePluginKey, { map }),
+    )
+    // 2. 清理 ghost mark：doc 中引用了已不在 comments 的 id
+    const ids = new Set(list.map((c) => c.id))
+    const markType = ed.state.schema.marks.comment
+    if (!markType) return
+    // 不进 undo 栈：用户没主动删，这些是幽灵 mark 自动清理
+    const tr = ed.state.tr.setMeta('addToHistory', false)
+    let dirty = false
+    ed.state.doc.descendants((node, pos) => {
+      if (!node.marks) return
+      for (const m of node.marks) {
+        if (m.type === markType && m.attrs.commentId && !ids.has(m.attrs.commentId)) {
+          tr.removeMark(pos, pos + node.nodeSize, markType)
+          dirty = true
+        }
+      }
+    })
+    if (dirty) {
+      syncing = true
+      ed.view.dispatch(tr)
+      syncing = false
+    }
+  },
+  { deep: true },
+)
 
 function closeAllPickers() {
   headingDropdownOpen.value = false
@@ -905,6 +1125,8 @@ const editor = useEditor({
     Typography,
     SearchHighlightExt,
     DiffHighlight,
+    CommentMark,
+    CommentBadgeExt,
   ],
   onCreate() {
     // 编辑器已创建，异步注入初始内容（含图片 data URL 恢复）
@@ -937,6 +1159,32 @@ const editor = useEditor({
         emit('update:modelValue', json)
       }
     }
+
+    // 批注孤儿扫描：删除整段带批注的文字后，对应 comment 标 orphan；
+    // ghost mark 引用了已删除的 comment → 主动清理
+    nextTick(() => {
+      if (syncing) return
+      const { ghostIds } = docStore.sweepOrphans()
+      if (ghostIds.length === 0) return
+      const ed = editor.value
+      if (!ed) return
+      syncing = true
+      // 不进 undo 栈：用户没主动删，幽灵 mark 自动清理
+      const tr = ed.state.tr.setMeta('addToHistory', false)
+      const markType = ed.state.schema.marks.comment
+      if (markType) {
+        ed.state.doc.descendants((node, pos) => {
+          if (!node.marks) return
+          for (const m of node.marks) {
+            if (m.type === markType && m.attrs.commentId && ghostIds.includes(m.attrs.commentId)) {
+              tr.removeMark(pos, pos + node.nodeSize, markType)
+            }
+          }
+        })
+        if (tr.docChanged) ed.view.dispatch(tr)
+      }
+      syncing = false
+    })
   },
   onSelectionUpdate() {
     editorStateTick.value++
@@ -1030,12 +1278,35 @@ const editor = useEditor({
         // 根据菜单内容估算尺寸
         const isDoc = !props.editMode || props.editMode === 'document'
         const hasText = !!selText
-        let menuH = isDoc ? (hasText ? 190 : 105) : (hasText ? 200 : 70)
+        // 文档模式 + 有选区：含「💬 插入批注」多一项（+28px）
+        let menuH = isDoc ? (hasText ? 218 : 105) : (hasText ? 200 : 70)
         const { x, y } = editorSmartMenuPos(event.clientX, event.clientY, 200, menuH)
         ctxMenuX.value = x
         ctxMenuY.value = y
         ctxMenuShow.value = true
         return true
+      },
+      // 批注 hover 浮层：mouseover 委托 .comment-mark / .comment-badge
+      mouseover: (_view, event) => {
+        const t = event.target as HTMLElement | null
+        if (!t) return
+        const el = t.closest('.comment-mark, .comment-badge') as HTMLElement | null
+        if (!el) {
+          // 不在批注元素上 → 安排延迟关闭（不阻止其他逻辑）
+          tooltipRef.value?.scheduleHide()
+          return
+        }
+        const id = el.getAttribute('data-comment-id')
+        if (!id || id === '0') return
+        tooltipRef.value?.show(id, el)
+      },
+      mouseout: (_view, event) => {
+        const t = event.target as HTMLElement | null
+        if (!t) return
+        const el = t.closest('.comment-mark, .comment-badge') as HTMLElement | null
+        if (!el) return
+        // 离开批注元素本身时延迟关闭（浮层自身的 mouseenter 会取消）
+        tooltipRef.value?.scheduleHide()
       },
       paste: (_view, event) => {
         const items = event.clipboardData?.items
@@ -1153,6 +1424,18 @@ onBeforeUnmount(() => {
   editor.value?.destroy()
 })
 
+// ── 批注浮层跳转桥接（CommentTooltip 通过 window CustomEvent 触发跳转） ──
+function onCommentJumpFromTooltip(e: Event) {
+  const detail = (e as CustomEvent<{ commentId: string }>).detail
+  if (detail?.commentId) onCommentListJump(detail.commentId)
+}
+onMounted(() => {
+  window.addEventListener('comment-jump', onCommentJumpFromTooltip)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('comment-jump', onCommentJumpFromTooltip)
+})
+
 // ── 工具栏操作 ──
 function focus() { editor.value?.chain().focus().run() }
 
@@ -1161,6 +1444,109 @@ function execItalic() { focus(); editor.value?.chain().toggleItalic().run() }
 function execUnderline() { focus(); editor.value?.chain().toggleUnderline().run() }
 function execStrike() { focus(); editor.value?.chain().toggleStrike().run() }
 function execHighlight() { focus(); editor.value?.chain().toggleHighlight().run() }
+
+// ── 批注输入浮层状态 ──
+const commentBarVisible = ref(false)
+const commentBarPosition = ref({ top: 0, left: 0 })
+const commentPendingAnchor = ref<{ from: number; to: number } | null>(null)
+const tooltipRef = ref<InstanceType<typeof CommentTooltip> | null>(null)
+
+/**
+ * 工具栏 / 右键触发"插入批注"
+ *  - 校验选区非空
+ *  - 校验单段内（v1 限制）
+ *  - 弹出输入浮层
+ */
+function execComment() {
+  const ed = editor.value
+  if (!ed) return
+  // 素材模式下不允许插入批注（与工具栏/右键菜单的隐藏策略一致）
+  if (props.editMode === 'material') return
+  const { from, to, empty } = ed.state.selection
+  if (empty) {
+    // 给个轻提示（用临时 DOM 提示，避免引新依赖）
+    showToolbarHint('请先选中要批注的文字')
+    return
+  }
+  // 单段内校验
+  const $from = ed.state.doc.resolve(from)
+  const $to = ed.state.doc.resolve(to)
+  if ($from.parent !== $to.parent) {
+    showToolbarHint('批注暂不支持跨段，请选择同一段内的文字')
+    return
+  }
+  // 计算浮层位置：选区中点水平居中 + 下方；自动避左右 + 翻上下
+  const start = ed.view.coordsAtPos(from)
+  const end = ed.view.coordsAtPos(to)
+  const midX = (start.left + end.right) / 2
+  const { top, left } = editorSmartMenuPosCenter(midX, end.bottom, 280, 160)
+  commentBarPosition.value = { top, left }
+  commentPendingAnchor.value = { from, to }
+  commentBarVisible.value = true
+}
+
+function onCommentConfirm(text: string) {
+  const ed = editor.value
+  const anchor = commentPendingAnchor.value
+  if (!ed || !anchor) {
+    commentBarVisible.value = false
+    return
+  }
+  // 1. 写 store（生成 comment + id + order）
+  const c = docStore.addComment(text)
+  // 2. 在选区加 mark
+  ed.chain()
+    .focus()
+    .setTextSelection({ from: anchor.from, to: anchor.to })
+    .setMark('comment', { commentId: c.id })
+    .run()
+  // 3. 关闭浮层
+  commentBarVisible.value = false
+  commentPendingAnchor.value = null
+  // 4. 触发 mark+comments 同步（forceUpdate 让 modelValue 写出 comments）
+  //    onUpdate 内部会自动发射 modelValue，watch store.comments 触发角标刷新
+  editorStateTick.value++
+}
+
+function onCommentCancel() {
+  commentBarVisible.value = false
+  commentPendingAnchor.value = null
+}
+
+/** 文末列表跳转：在编辑器中定位首个带该 commentId 的 mark，滚动到可视区 */
+function onCommentListJump(commentId: string) {
+  const ed = editor.value
+  if (!ed) return
+  let targetPos: number | null = null
+  ed.state.doc.descendants((node, pos) => {
+    if (targetPos !== null) return false
+    if (!node.marks) return
+    for (const m of node.marks) {
+      if (m.type.name === 'comment' && m.attrs.commentId === commentId) {
+        targetPos = pos
+        return false
+      }
+    }
+  })
+  if (targetPos === null) return
+  // 选中该 mark 范围起点 + 滚动到可视区
+  ed.commands.focus()
+  ed.commands.setTextSelection(targetPos)
+  // 平滑滚动
+  nextTick(() => {
+    const dom = ed.view.nodeDOM(targetPos!) as HTMLElement | null
+    dom?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+/** 工具栏轻量提示（浮在按钮上方 800ms 自动消失） */
+const toolbarHint = ref('')
+let toolbarHintTimer: ReturnType<typeof setTimeout> | null = null
+function showToolbarHint(msg: string) {
+  toolbarHint.value = msg
+  if (toolbarHintTimer) clearTimeout(toolbarHintTimer)
+  toolbarHintTimer = setTimeout(() => { toolbarHint.value = '' }, 1800)
+}
 function execSuperscript() { focus(); editor.value?.chain().toggleSuperscript().run() }
 function execSubscript() { focus(); editor.value?.chain().toggleSubscript().run() }
 function execClearFormat() { focus(); editor.value?.chain().clearNodes().unsetAllMarks().run() }
@@ -1305,6 +1691,7 @@ const active = computed(() => ({
   underline: editor.value?.isActive('underline') ?? false,
   strike: editor.value?.isActive('strike') ?? false,
   highlight: editor.value?.isActive('highlight') ?? false,
+  comment: editor.value?.isActive('comment') ?? false,
   superscript: editor.value?.isActive('superscript') ?? false,
   subscript: editor.value?.isActive('subscript') ?? false,
   bullet: editor.value?.isActive('bulletList') ?? false,
@@ -1443,6 +1830,7 @@ const svg = {
   subscript: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l8-8"/><path d="M12 19l-8-8"/><path d="M20 20h-4c1-2 2-3 2-4 0-1-.8-2-2-2s-2 1-2 2"/></svg>`,
   textColor: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9.6 3.3h4.8L20 21h-2.8l-1.2-3.6H8l-1.2 3.6H4L9.6 3.3zm-1 11.7h6.8L12 5.7l-1.4 4.5z"/></svg>`,
   clearFormat: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7l-4-4 4-4h13"/><path d="M6.5 13.5l4-8"/><path d="M10 6h2"/><path d="M14 10v8"/></svg>`,
+  comment: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/></svg>`,
   indent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="7 10 9 12 7 14"/></svg>`,
   outdent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="17 10 15 12 17 14"/></svg>`,
   // ── 表格操作图标 ──
@@ -1534,6 +1922,7 @@ function btnClass(active: boolean) {
       </div>
 
       <button title="高亮" :class="btnClass(active.highlight)" @mousedown.prevent="execHighlight" v-html="svg.highlighter" />
+      <button v-if="editMode !== 'material'" title="插入批注" :class="btnClass(active.comment)" @mousedown.prevent="execComment" v-html="svg.comment" />
       <button title="清除格式" class="rich-btn" @mousedown.prevent="execClearFormat" v-html="svg.clearFormat" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
@@ -1846,7 +2235,24 @@ function btnClass(active: boolean) {
 
       <!-- TipTap 编辑区 -->
       <EditorContent :editor="editor" class="flex-1 overflow-y-auto rich-content" :style="{ color: contentText }" />
+
+      <!-- 批注面板（CandidatePanel 式右侧抽屉，内联 flex 子节点挤占编辑器空间） -->
+      <CommentListPanel v-if="editMode !== 'material'" @jump="onCommentListJump" />
     </div>
+
+    <!-- 批注输入浮层 -->
+    <CommentInputBar
+      v-if="commentBarVisible"
+      :position="commentBarPosition"
+      @confirm="onCommentConfirm"
+      @cancel="onCommentCancel"
+    />
+
+    <!-- 批注 hover 浮层 -->
+    <CommentTooltip ref="tooltipRef" />
+
+    <!-- 工具栏轻量提示 -->
+    <div v-if="toolbarHint" class="rich-toolbar-hint">{{ toolbarHint }}</div>
 
     <!-- 右键菜单 (Teleport to body) -->
     <Teleport to="body">
@@ -1873,6 +2279,9 @@ function btnClass(active: boolean) {
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToChat">
             <span>💬 添加到 AI 对话</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddComment">
+            <span>💬 插入批注</span><span class="ctx-shortcut" />
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
             <span>📋 添加到候选库</span><span class="ctx-shortcut" />
@@ -2203,6 +2612,73 @@ function btnClass(active: boolean) {
   transform: scale(1.1);
   box-shadow: var(--ae-swatch-hover);
   z-index: 1;
+}
+
+/* ── 批注：下划虚线 + 角标 ── */
+.rich-content span[data-comment-id],
+.rich-content .comment-mark {
+  text-decoration: underline dashed !important;
+  text-decoration-color: #f59e0b !important;
+  text-decoration-thickness: 1.5px !important;
+  text-underline-offset: 3px !important;
+  cursor: help;
+  transition: background-color 0.12s;
+}
+.rich-content span[data-comment-id]:hover,
+.rich-content .comment-mark:hover {
+  background-color: rgba(245, 158, 11, 0.12);
+}
+.dark .rich-content span[data-comment-id]:hover,
+.dark .rich-content .comment-mark:hover {
+  background-color: rgba(251, 191, 36, 0.18);
+}
+.rich-content .comment-badge {
+  color: #b45309;
+  font-size: 0.7em;
+  font-weight: 600;
+  cursor: help;
+  margin-left: 1px;
+  user-select: none;
+  -webkit-user-select: none;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: background-color 0.12s;
+}
+.rich-content .comment-badge:hover {
+  background: rgba(245, 158, 11, 0.25);
+}
+.dark .rich-content .comment-badge {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+}
+.dark .rich-content .comment-badge:hover {
+  background: rgba(251, 191, 36, 0.28);
+}
+
+/* ── 工具栏轻量提示 ── */
+.rich-toolbar-hint {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 6px 12px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  animation: rich-toolbar-hint-fade 0.2s ease-out;
+}
+.dark .rich-toolbar-hint {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+@keyframes rich-toolbar-hint-fade {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 /* ── 右键菜单 ── */
