@@ -306,8 +306,11 @@ export const useMaterialStore = defineStore("material", () => {
     const mat = materials.value.find(m => m.id === matId);
     if (mat) {
       currentMaterialId.value = matId;
-      currentTagDocumentId.value = null;
       currentMaterialContent.value = parseMaterialContent(mat.content);
+      // 不清空 currentTagDocumentId：
+      // MaterialPanel 用它高亮所属标签组，外部导航（如搜索）需要保留高亮。
+      // isViewingTagDoc 的 readonly 逻辑由 EditorView 自行判断：如果同时有
+      // currentMaterialId，说明是选中了单个素材（可编辑），不是标签文档视图。
     }
   }
 

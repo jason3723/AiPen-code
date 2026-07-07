@@ -2,7 +2,6 @@
 import { ref, watch, onBeforeUnmount, computed, nextTick } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { Mark, Extension } from '@tiptap/core'
-import Underline from '@tiptap/extension-underline'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import { CellSelection } from 'prosemirror-tables'
@@ -27,6 +26,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document'
 import { useMaterialStore } from '../stores/materialStore'
+import { useCandidateStore } from '../stores/candidateStore'
 import { useExportSettingsStore } from '../stores/exportSettings'
 import { textToDocJson } from '../utils/textToDocJson'
 
@@ -155,6 +155,8 @@ const props = defineProps<{
   editMode?: 'document' | 'material'
   materialId?: string
   autoShowOutline?: boolean
+  /** 外部搜索词：打开文档/素材后自动高亮并跳转到首个命中位置 */
+  highlightQuery?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: any] // ProseMirror JSON 或 纯文本字符串
@@ -168,6 +170,7 @@ const emit = defineEmits<{
 
 const docStore = useDocumentStore()
 const materialStore = useMaterialStore()
+const candidateStore = useCandidateStore()
 const exportSettingsStore = useExportSettingsStore()
 
 // ── 排版设置联动：字号与行间距 ──
@@ -715,6 +718,17 @@ function execCtxMenuAddToChat() {
   docStore.sidebarTab = 'chat'
   closeCtxMenu()
 }
+function execCtxMenuAddToCandidate() {
+  if (!ctxMenuSelText.value) return
+  const isDoc = !props.editMode || props.editMode === 'document'
+  candidateStore.add({
+    text: ctxMenuSelText.value,
+    sourceType: isDoc ? 'document' : 'material',
+    sourceId: isDoc ? docStore.currentDocId : (materialStore.currentMaterialId || ''),
+    sourceTitle: isDoc ? docStore.currentTitle : (materialStore.currentMaterial?.title || ''),
+  })
+  closeCtxMenu()
+}
 function execCtxMenuInsertToChat() {
   if (ctxMenuSelText.value) {
     emit('insert-to-chat', ctxMenuSelText.value)
@@ -874,7 +888,6 @@ const editor = useEditor({
       link: { openOnClick: false, HTMLAttributes: { class: 'text-blue-500 dark:text-blue-400 underline' } },
     }),
     Highlight.configure({ multicolor: true }),
-    Underline,
     TextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right', 'justify'] }),
     Table.configure({ resizable: true }),
     TableRow,
@@ -1017,7 +1030,7 @@ const editor = useEditor({
         // 根据菜单内容估算尺寸
         const isDoc = !props.editMode || props.editMode === 'document'
         const hasText = !!selText
-        let menuH = isDoc ? (hasText ? 160 : 105) : (hasText ? 170 : 70)
+        let menuH = isDoc ? (hasText ? 190 : 105) : (hasText ? 200 : 70)
         const { x, y } = editorSmartMenuPos(event.clientX, event.clientY, 200, menuH)
         ctxMenuX.value = x
         ctxMenuY.value = y
@@ -1092,6 +1105,48 @@ watch(() => props.readonly, (v) => {
 watch(() => props.autoShowOutline, (v) => {
   if (v) showOutline.value = true
 })
+
+// ── 外部搜索高亮：搜索面板点击结果后自动高亮 + 跳转 ──
+watch(
+  () => props.highlightQuery,
+  async (q) => {
+    if (!q || !editor.value) return;
+    // 等待组件 DOM 更新（modelValue prop 已到达组件）
+    await nextTick();
+    // 等待内容同步完成（modelValue watch 可能正在 async 加载并 setContent）
+    for (let retry = 0; retry < 50 && (syncDepth > 0 || syncing); retry++) {
+      await new Promise(r => setTimeout(r, 30));
+    }
+    const ed = editor.value;
+    if (!ed) return;
+
+    // 短延迟确保 setContent 后 ProseMirror 内部事务稳定
+    await new Promise(r => setTimeout(r, 0));
+
+    _searchMatches = [];
+    const lowerQ = q.toLowerCase();
+    ed.state.doc.descendants((node, pos) => {
+      if (!node.isText || !node.text) return true;
+      const text = node.text.toLowerCase();
+      let offset = 0;
+      while (offset < text.length) {
+        const found = text.indexOf(lowerQ, offset);
+        if (found === -1) break;
+        _searchMatches.push({ from: pos + found, to: pos + found + lowerQ.length });
+        offset = found + lowerQ.length;
+      }
+      return true;
+    });
+    applySearchDecorations();
+    searchCount.value = _searchMatches.length;
+    if (_searchMatches.length > 0) {
+      searchIdx.value = 1;
+      goToResult(0);
+    }
+  },
+  { immediate: false }
+)
+
 
 // ── 清理 ──
 onBeforeUnmount(() => {
@@ -1740,7 +1795,8 @@ function btnClass(active: boolean) {
     </div>
 
     <!-- Body: outline panel + editor -->
-    <div class="flex flex-1 min-h-0">
+    <div class="flex flex-1 min-h-0 relative overflow-hidden">
+      <slot name="overlay" />
       <!-- 大纲导航面板 -->
       <div
         v-if="showOutline"
@@ -1818,6 +1874,9 @@ function btnClass(active: boolean) {
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToChat">
             <span>💬 添加到 AI 对话</span><span class="ctx-shortcut" />
           </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
+            <span>📋 添加到候选库</span><span class="ctx-shortcut" />
+          </div>
         </template>
       </template>
       <!-- 素材模式菜单 -->
@@ -1829,6 +1888,9 @@ function btnClass(active: boolean) {
           <div class="ctx-separator" />
           <div class="ctx-menu-item" @click.stop="execCtxMenuInsertToChat">
             <span>💬 添加到 AI 对话</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
+            <span>📋 添加到候选库</span><span class="ctx-shortcut" />
           </div>
         </template>
         <div class="ctx-separator" />

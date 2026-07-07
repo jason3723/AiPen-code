@@ -2,6 +2,7 @@ mod ai;
 mod commands;
 mod db;
 mod diff;
+mod tokenizer;
 mod version;
 
 use std::sync::Mutex;
@@ -265,6 +266,8 @@ pub fn run() {
             commands::delete_tag,
             commands::rename_tag,
             commands::suggest_tags,
+            commands::search_documents,
+            commands::search_materials,
             commands::add_bookmark,
             commands::list_bookmarks,
             commands::delete_bookmark,

@@ -383,6 +383,37 @@ pub async fn init_db(db_path: &Path) -> Result<Pool<Sqlite>, DbError> {
         )"
     ).execute(&pool).await?;
 
+    // ── 全文搜索 FTS5 表 ──
+    sqlx::query(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS doc_fts USING fts5(
+            doc_id UNINDEXED,
+            title,
+            content,
+            tokenize='unicode61'
+        )"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS material_fts USING fts5(
+            material_id UNINDEXED,
+            title,
+            content,
+            source_title,
+            source_url UNINDEXED,
+            tokenize='unicode61'
+        )"
+    ).execute(&pool).await?;
+
+    // 首次启动：FTS 为空则从已有数据全量重建
+    if let Ok(count) = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM doc_fts"
+    ).fetch_one(&pool).await {
+        if count == 0 {
+            let _ = rebuild_doc_fts(&pool).await;
+            let _ = rebuild_material_fts(&pool).await;
+        }
+    }
+
     Ok(pool)
 }
 
@@ -3396,12 +3427,37 @@ async fn migrate_content_to_json(pool: &Pool<Sqlite>) {
 
 // ─── 文档 CRUD ──────────────────────────────────────────────
 
+/// 创建文档。若标题已存在，则自动在末尾追加「（1）」「（2）」… 序号，避免重名
 pub async fn create_document(pool: &Pool<Sqlite>, title: &str) -> Result<Document, DbError> {
+    let final_title = unique_title(pool, title).await?;
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO documents (id, title) VALUES (?, ?)")
-        .bind(&id).bind(title)
+        .bind(&id).bind(&final_title)
         .execute(pool).await?;
     get_document(pool, &id).await
+}
+
+/// 若 title 已存在，返回带递增序号的可用标题；否则原样返回
+async fn unique_title(pool: &Pool<Sqlite>, title: &str) -> Result<String, DbError> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM documents WHERE title = ?")
+        .bind(title)
+        .fetch_one(pool)
+        .await?;
+    if count == 0 {
+        return Ok(title.to_string());
+    }
+    let mut n = 1i64;
+    loop {
+        let candidate = format!("{}（{}）", title, n);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM documents WHERE title = ?")
+            .bind(&candidate)
+            .fetch_one(pool)
+            .await?;
+        if count == 0 {
+            return Ok(candidate);
+        }
+        n += 1;
+    }
 }
 
 pub async fn get_document(pool: &Pool<Sqlite>, doc_id: &str) -> Result<Document, DbError> {
@@ -5054,4 +5110,314 @@ pub async fn get_materials_by_tag_ids(
         });
     }
     Ok(result)
+}
+
+// ─── 全文搜索 FTS5 操作 ────────────────────────────────────
+
+/// 同步文档到 FTS 索引（content 列为 jieba 分词后的纯文本）
+pub async fn sync_doc_fts(
+    pool: &Pool<Sqlite>,
+    doc_id: &str,
+    title: &str,
+    segment_content: &str,
+) -> Result<(), DbError> {
+    // FTS5 虚拟表不支持按 UNINDEXED 列去重，INSERT OR REPLACE 无法生效
+    // 必须先删后插，否则每次 save_draft 都会追加一条重复记录
+    sqlx::query("DELETE FROM doc_fts WHERE doc_id = ?")
+        .bind(doc_id).execute(pool).await?;
+    sqlx::query(
+        "INSERT INTO doc_fts(doc_id, title, content) VALUES(?1, ?2, ?3)"
+    )
+    .bind(doc_id).bind(title).bind(segment_content)
+    .execute(pool).await?;
+    Ok(())
+}
+
+/// 从 FTS 索引中删除文档
+pub async fn delete_doc_fts(pool: &Pool<Sqlite>, doc_id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM doc_fts WHERE doc_id = ?")
+        .bind(doc_id).execute(pool).await?;
+    Ok(())
+}
+
+/// 同步素材到 FTS 索引
+pub async fn sync_material_fts(
+    pool: &Pool<Sqlite>,
+    material_id: &str,
+    title: &str,
+    segment_content: &str,
+    source_title: Option<&str>,
+    source_url: Option<&str>,
+) -> Result<(), DbError> {
+    // 同样原因，先删后插
+    sqlx::query("DELETE FROM material_fts WHERE material_id = ?")
+        .bind(material_id).execute(pool).await?;
+    sqlx::query(
+        "INSERT INTO material_fts(material_id, title, content, source_title, source_url) VALUES(?1, ?2, ?3, ?4, ?5)"
+    )
+    .bind(material_id).bind(title).bind(segment_content)
+    .bind(source_title).bind(source_url)
+    .execute(pool).await?;
+    Ok(())
+}
+
+/// 从 FTS 索引中删除素材
+pub async fn delete_material_fts(pool: &Pool<Sqlite>, material_id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM material_fts WHERE material_id = ?")
+        .bind(material_id).execute(pool).await?;
+    Ok(())
+}
+
+/// 全量重建文档 FTS 索引（首次初始化时调用）
+pub async fn rebuild_doc_fts(pool: &Pool<Sqlite>) -> Result<(), DbError> {
+    eprintln!("[FTS] 全量重建文档索引...");
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT id, title, draft_content FROM documents"
+    ).fetch_all(pool).await?;
+
+    let mut count = 0;
+    for (id, title, content) in &rows {
+        let segmented = crate::tokenizer::segment_prosemirror_json(content);
+        sqlx::query(
+            "INSERT INTO doc_fts(doc_id, title, content) VALUES(?1, ?2, ?3)"
+        )
+        .bind(id).bind(title).bind(&segmented)
+        .execute(pool).await?;
+        count += 1;
+    }
+    eprintln!("[FTS] 文档索引重建完成: {} 条", count);
+    Ok(())
+}
+
+/// 全量重建素材 FTS 索引（首次初始化时调用）
+pub async fn rebuild_material_fts(pool: &Pool<Sqlite>) -> Result<(), DbError> {
+    eprintln!("[FTS] 全量重建素材索引...");
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+        "SELECT id, title, content, source_title, source_url FROM materials"
+    ).fetch_all(pool).await?;
+
+    let mut count = 0;
+    for (id, title, content, source_title, source_url) in &rows {
+        let segmented = crate::tokenizer::segment_prosemirror_json(content);
+        sqlx::query(
+            "INSERT INTO material_fts(material_id, title, content, source_title, source_url) VALUES(?1, ?2, ?3, ?4, ?5)"
+        )
+        .bind(id).bind(title).bind(&segmented)
+        .bind(source_title.as_deref()).bind(source_url.as_deref())
+        .execute(pool).await?;
+        count += 1;
+    }
+    eprintln!("[FTS] 素材索引重建完成: {} 条", count);
+    Ok(())
+}
+
+/// 搜索文档（jieba FTS + LIKE 兜底）
+pub async fn search_documents_fts(
+    pool: &Pool<Sqlite>,
+    segmented_query: &str,
+    raw_query: &str,
+) -> Result<Vec<SearchResultRow>, DbError> {
+    // 1. FTS 主搜索：只用于匹配和排序，返回原始 draft_content
+    //    DISTINCT 处理历史脏数据（早期 INSERT OR REPLACE 失效留下的重复行）
+    let fts_rows = sqlx::query_as::<_, SearchResultRow>(
+        "SELECT DISTINCT
+            d.id AS doc_id,
+            NULL AS material_id,
+            d.title,
+            d.draft_content AS snippet,
+            d.project_id,
+            NULL AS source_title,
+            NULL AS source_url,
+            d.updated_at
+         FROM doc_fts
+         JOIN documents d ON d.id = doc_fts.doc_id
+         WHERE doc_fts MATCH ?1
+         ORDER BY rank
+         LIMIT 50"
+    )
+    .bind(segmented_query)
+    .fetch_all(pool).await?;
+
+    // 2. LIKE 兜底：匹配跨词边界的子串（如 "建工" 搜 "党建工作"）
+    let like_rows = sqlx::query_as::<_, SearchResultRow>(
+        "SELECT
+            d.id AS doc_id,
+            NULL AS material_id,
+            d.title,
+            d.draft_content AS snippet,
+            d.project_id,
+            NULL AS source_title,
+            NULL AS source_url,
+            d.updated_at
+         FROM documents d
+         WHERE d.draft_content LIKE '%' || ?1 || '%'
+            OR d.title LIKE '%' || ?1 || '%'
+         LIMIT 50"
+    )
+    .bind(raw_query)
+    .fetch_all(pool).await?;
+
+    // 3. 合并：去重 + 统一生成 snippet
+    let mut results: Vec<SearchResultRow> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for mut row in fts_rows {
+        let key = row.doc_id.clone().unwrap_or_default();
+        if seen.insert(key) {
+            row.snippet = extract_snippet(&row.snippet, raw_query);
+            results.push(row);
+        }
+    }
+    for mut row in like_rows {
+        if let Some(ref id) = row.doc_id {
+            if seen.insert(id.clone()) {
+                row.snippet = extract_snippet(&row.snippet, raw_query);
+                results.push(row);
+            }
+        }
+    }
+    Ok(results)
+}
+
+/// 搜索素材（jieba FTS + LIKE 兜底）
+pub async fn search_materials_fts(
+    pool: &Pool<Sqlite>,
+    segmented_query: &str,
+    raw_query: &str,
+) -> Result<Vec<SearchResultRow>, DbError> {
+    // 1. FTS 主搜索：只用于匹配，返回原始 content
+    //    DISTINCT 处理历史脏数据
+    let fts_rows = sqlx::query_as::<_, SearchResultRow>(
+        "SELECT DISTINCT
+            NULL AS doc_id,
+            m.id AS material_id,
+            m.title,
+            m.content AS snippet,
+            NULL AS project_id,
+            m.source_title,
+            m.source_url,
+            m.updated_at
+         FROM material_fts
+         JOIN materials m ON m.id = material_fts.material_id
+         WHERE material_fts MATCH ?1
+         ORDER BY rank
+         LIMIT 50"
+    )
+    .bind(segmented_query)
+    .fetch_all(pool).await?;
+
+    // 2. LIKE 兜底
+    let like_rows = sqlx::query_as::<_, SearchResultRow>(
+        "SELECT
+            NULL AS doc_id,
+            m.id AS material_id,
+            m.title,
+            m.content AS snippet,
+            NULL AS project_id,
+            m.source_title,
+            m.source_url,
+            m.updated_at
+         FROM materials m
+         WHERE m.content LIKE '%' || ?1 || '%'
+            OR m.title LIKE '%' || ?1 || '%'
+         LIMIT 50"
+    )
+    .bind(raw_query)
+    .fetch_all(pool).await?;
+
+    // 3. 合并：去重 + 统一生成 snippet
+    let mut results: Vec<SearchResultRow> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for mut row in fts_rows {
+        let key = row.material_id.clone().unwrap_or_default();
+        if seen.insert(key) {
+            row.snippet = extract_snippet(&row.snippet, raw_query);
+            results.push(row);
+        }
+    }
+    for mut row in like_rows {
+        if let Some(ref id) = row.material_id {
+            if seen.insert(id.clone()) {
+                row.snippet = extract_snippet(&row.snippet, raw_query);
+                results.push(row);
+            }
+        }
+    }
+    Ok(results)
+}
+
+/// 从原始内容中提取命中关键词附近的文本片段（含 <mark> 标签）
+/// 用于 LIKE 兜底搜索的 snippet 生成
+fn extract_snippet(content: &str, query: &str) -> String {
+    // 从 ProseMirror JSON 提取纯文本
+    let plain = crate::tokenizer::extract_plain_text(content);
+    if plain.is_empty() || query.is_empty() {
+        return String::new();
+    }
+    // 去掉所有空白字符后再匹配
+    // 1) ProseMirror 文本节点之间用 " " 拼接，会导致跨节点关键词如 "党建" 变成 "党 建"
+    // 2) 数据库里旧的 plain text 存储可能含换行/制表符
+    let compact: String = plain.chars().filter(|c| !c.is_whitespace()).collect();
+    let q_compact: String = query.chars().filter(|c| !c.is_whitespace()).collect();
+    if q_compact.is_empty() {
+        return String::new();
+    }
+    let q_lower = q_compact.to_lowercase();
+    let c_lower = compact.to_lowercase();
+    // 用 char 索引定位（compact 已经是无空白的纯文本）
+    let pos = c_lower.find(&q_lower);
+    let pos = match pos {
+        Some(p) => p,
+        None => {
+            // 找不到时给个前 80 字符的预览
+            let preview: String = compact.chars().take(80).collect();
+            return preview;
+        }
+    };
+    // find() 返回字节偏移量，中文 3 字节/字符，必须换算为字符索引
+    let pos_chars = c_lower.char_indices()
+        .take_while(|(i, _)| *i < pos)
+        .count();
+    // 取命中位置前后各 30 个字符
+    let q_chars_count = q_lower.chars().count();
+    let total_chars = compact.chars().count();
+    let start_chars = pos_chars.saturating_sub(30);
+    let end_chars = (pos_chars + q_chars_count + 30).min(total_chars);
+    // 防溢出：pos_chars + q_chars_count 可能 > total_chars（命中位置接近文本末尾）
+    let prefix: String = compact.chars().skip(start_chars).take(pos_chars - start_chars).collect();
+    let hit: String = compact.chars().skip(pos_chars).take(q_chars_count).collect();
+    let suffix_end = end_chars.saturating_sub(pos_chars + q_chars_count);
+    let suffix: String = compact.chars()
+        .skip(pos_chars + q_chars_count)
+        .take(suffix_end)
+        .collect();
+    let mut snip = String::new();
+    if start_chars > 0 { snip.push_str("..."); }
+    snip.push_str(&html_escape(&prefix));
+    snip.push_str("<mark>");
+    snip.push_str(&html_escape(&hit));
+    snip.push_str("</mark>");
+    snip.push_str(&html_escape(&suffix));
+    if end_chars < total_chars { snip.push_str("..."); }
+    snip
+}
+
+/// 简单 HTML 转义
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+}
+
+/// 搜索查询的返回行
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SearchResultRow {
+    pub doc_id: Option<String>,
+    pub material_id: Option<String>,
+    pub title: String,
+    pub snippet: String,
+    pub project_id: Option<String>,
+    pub source_title: Option<String>,
+    pub source_url: Option<String>,
+    pub updated_at: String,
 }

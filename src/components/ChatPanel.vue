@@ -158,6 +158,37 @@ watch(chatDataVersion, () => {
   loadMaterialTags();
 });
 
+// ── AI 消息右键菜单 ──
+const msgCtxShow = ref(false);
+const msgCtxX = ref(0);
+const msgCtxY = ref(0);
+const msgCtxContent = ref("");
+
+function onMsgContextMenu(event: MouseEvent, content: string) {
+  event.preventDefault();
+  if (!content) return;
+  msgCtxContent.value = content;
+  msgCtxX.value = event.clientX;
+  msgCtxY.value = event.clientY;
+  msgCtxShow.value = true;
+}
+
+function closeMsgCtx() {
+  msgCtxShow.value = false;
+}
+
+async function copyMsgContent() {
+  try {
+    await navigator.clipboard.writeText(msgCtxContent.value);
+  } catch { /* 忽略 */ }
+  closeMsgCtx();
+}
+
+function importMsgToMaterial() {
+  materialStore.openClipDialog(msgCtxContent.value);
+  closeMsgCtx();
+}
+
 function toggleKb(kbId: string) {
   const idx = selectedKbIds.value.indexOf(kbId);
   if (idx >= 0) {
@@ -461,6 +492,7 @@ function formatTime(ts: string) {
           :class="msg.role === 'user'
             ? 'bg-blue-600/30 text-gray-800 dark:text-gray-200'
             : 'bg-gray-100/70 dark:bg-gray-800/60 text-gray-700 dark:text-gray-300'"
+          @contextmenu.prevent="msg.role === 'assistant' && onMsgContextMenu($event, msg.content)"
         >
           <div v-if="msg.context_text" class="text-[10px] text-blue-400/70 mb-1.5 border-l-2 border-blue-600/50 pl-2 italic leading-relaxed max-h-20 overflow-y-auto">
             {{ msg.context_text }}
@@ -491,7 +523,7 @@ function formatTime(ts: string) {
         class="relative mb-2 px-2.5 py-2 bg-blue-100 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800/40 rounded-lg group"
       >
         <div class="text-[10px] text-blue-400 font-medium mb-0.5">📎 引用文本</div>
-        <div class="text-[11px] text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3 italic">
+        <div class="text-[11px] text-gray-700 dark:text-gray-300 leading-relaxed italic overflow-y-auto" style="max-height: 5em;">
           {{ pendingQuote }}
         </div>
         <button
@@ -610,5 +642,35 @@ function formatTime(ts: string) {
         </button>
       </div>
     </div>
+
+    <!-- AI 消息右键菜单 -->
+    <Teleport to="body">
+      <div
+        v-if="msgCtxShow"
+        class="fixed inset-0 z-[10006]"
+        @click.self="closeMsgCtx"
+        @contextmenu.prevent="closeMsgCtx"
+      >
+        <div
+          class="absolute w-[180px] bg-white/95 dark:bg-gray-900/95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl dark:shadow-2xl py-1 backdrop-blur-md"
+          :style="{ left: msgCtxX + 'px', top: msgCtxY + 'px' }"
+        >
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
+            @click="copyMsgContent"
+          >
+            <span>复制</span>
+            <span class="text-gray-400 dark:text-gray-500 text-[11px]">Ctrl+C</span>
+          </button>
+          <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
+            @click="importMsgToMaterial"
+          >
+            <span>📦 导入到素材库</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

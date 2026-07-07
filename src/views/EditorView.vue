@@ -24,9 +24,12 @@ import { useConfirm } from "../composables/useConfirm";
 import { computeDiff } from "../utils/diff";
 import { textToDocJson } from "../utils/textToDocJson";
 import MaterialPanel from "../components/MaterialPanel.vue";
+import SearchPanel from "../components/SearchPanel.vue";
+import CandidatePanel from "../components/CandidatePanel.vue";
 import MaterialClipDialog from "../components/MaterialClipDialog.vue";
 import FeedbackDialog from "../components/FeedbackDialog.vue";
 import { useTheme } from "../stores/theme";
+import { useCandidateStore } from "../stores/candidateStore";
 
 const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
@@ -37,6 +40,7 @@ const appVersion = "3.0.4";
 const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
 const materialStore = useMaterialStore();
+const candidateStore = useCandidateStore();
 const {
   documents,
   currentContent,
@@ -130,7 +134,7 @@ function onSidebarContextMenu(event: MouseEvent) {
   const text = sel ? sel.toString().trim() : '';
   // 根据是否有选中文字切换菜单类型，并智能定位
   if (text) {
-    const { x, y } = smartMenuPos(event.clientX, event.clientY, 200, 135);
+    const { x, y } = smartMenuPos(event.clientX, event.clientY, 200, 165);
     ctxMenu.value = { show: true, x, y, type: 'text', selectedText: text };
   } else {
     const { x, y } = smartMenuPos(event.clientX, event.clientY, 128, 110);
@@ -155,6 +159,18 @@ function handleSidebarAddToChat() {
   if (text) {
     store.injectedChatText = text;
     store.sidebarTab = 'chat';
+  }
+  onClickAwayContextMenu();
+}
+function handleSidebarAddToCandidate() {
+  const text = ctxMenu.value.selectedText;
+  if (text) {
+    candidateStore.add({
+      text,
+      sourceType: 'document',
+      sourceId: store.currentDocId,
+      sourceTitle: store.currentTitle,
+    });
   }
   onClickAwayContextMenu();
 }
@@ -257,10 +273,12 @@ watch(showAbout, (v) => {
 });
 
 // ── 左栏 Sub-Tab + 编辑器状态机 ──
-const leftSubTab = ref<'docs' | 'materials' | 'browser'>('docs');
+const leftSubTab = ref<'docs' | 'materials' | 'browser' | 'search'>('docs');
 
 // 编辑模式：document → 编辑本机文档；material → 浏览/编辑素材；webview → 浏览器
-const isViewingTagDoc = computed(() => !!materialStore.currentTagDocumentId);
+// 只有标签文档视图（无具体素材选中）才是只读的卡片模式
+// 如果同时有 currentMaterialId，说明是选中了具体素材，可编辑
+const isViewingTagDoc = computed(() => !!materialStore.currentTagDocumentId && !materialStore.currentMaterialId);
 const editMode = computed(() => {
   if (leftSubTab.value === 'browser') return 'webview' as const;
   if (leftSubTab.value === 'materials' && (materialStore.currentMaterialId || materialStore.currentTagDocumentId)) return 'material' as const;
@@ -391,6 +409,38 @@ function handleTagDocSelect(tagId: string | null) {
   leftSubTab.value = 'materials';
 }
 
+// ── 搜索面板导航 ──
+async function handleSearchNavigateToDocument(docId: string, query: string) {
+  searchHighlightQuery.value = undefined; // 先清空，确保 watch 触发
+  leftSubTab.value = 'docs';
+  await store.switchDocument(docId);
+  searchHighlightQuery.value = query;
+}
+
+async function handleSearchNavigateToMaterial(matId: string, query: string) {
+  searchHighlightQuery.value = undefined;
+  // 首次搜索时素材列表可能尚未加载（onMounted 未调用 materialStore.init()）
+  if (materialStore.materials.length === 0) {
+    await materialStore.init();
+  }
+  materialStore.selectMaterial(matId);
+  leftSubTab.value = 'materials';
+  // 等待 Vue flush 将新内容（displayedContent → modelValue）传递到 RichEditor
+  await nextTick();
+  searchHighlightQuery.value = query;
+}
+
+// ── 候选库面板导航 ──
+async function handleCandidateNavigateToDocument(docId: string) {
+  leftSubTab.value = 'docs';
+  await store.switchDocument(docId);
+}
+
+async function handleCandidateNavigateToMaterial(matId: string) {
+  materialStore.selectMaterial(matId);
+  leftSubTab.value = 'materials';
+}
+
 // ── 编辑器素材模式操作 ──
 function handleEditorInsertToChat(text: string) {
   store.injectedChatText = text;
@@ -455,6 +505,9 @@ function refreshTagView() {
 }
 
 // ── 浏览器嵌入式窗口 ──
+// ── 搜索高亮 ──
+const searchHighlightQuery = ref<string | undefined>(undefined);
+
 const browserOpen = ref(false);
 const browserUrl = ref("");
 const browserUrlInput = ref("");
@@ -1170,6 +1223,8 @@ async function tryExit() {
     cancelLabel: "取消",
   });
   if (ok) {
+    // 先隐藏窗口内容，避免对话框关闭到进程退出之间的视觉闪烁
+    document.body.style.opacity = "0";
     await invoke("exit_app");
   } else {
     // 用户取消退出，恢复浏览器窗口显示
@@ -1474,7 +1529,7 @@ async function handleExportWord() {
         <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
       </button>
       <aside
-        class="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 transition-[width] duration-200"
+        class="flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 transition-[width] duration-200 relative z-10"
         :class="leftCollapsed ? 'w-0 overflow-hidden border-r-0' : 'w-52'"
         @contextmenu="onSidebarContextMenu"
       >
@@ -1485,6 +1540,7 @@ async function handleExportWord() {
               { key: 'docs' as const, label: '文档' },
               { key: 'materials' as const, label: '素材' },
               { key: 'browser' as const, label: '浏览器' },
+              { key: 'search' as const, label: '搜索' },
             ]"
             :key="tab.key"
             class="flex-1 py-1.5 text-[11px] font-medium"
@@ -1685,6 +1741,15 @@ async function handleExportWord() {
           @selectTagDocument="handleTagDocSelect"
           @update="handleMaterialPanelUpdate"
         />
+
+        <!-- 搜索面板 -->
+        <KeepAlive>
+          <SearchPanel
+            v-if="leftSubTab === 'search'"
+            @navigateToDocument="handleSearchNavigateToDocument"
+            @navigateToMaterial="handleSearchNavigateToMaterial"
+          />
+        </KeepAlive>
       </aside>
 
       <!-- 中间：编辑器 + 写作进度条 -->
@@ -1832,13 +1897,21 @@ async function handleExportWord() {
           :editMode="editorEditMode"
           :materialId="materialStore.currentMaterialId ?? undefined"
           :auto-show-outline="store.isTutorialDoc"
+          :highlight-query="searchHighlightQuery"
           class="flex-1"
           @insert-to-chat="handleEditorInsertToChat"
           @delete-material="handleEditorDeleteMaterial"
           @remove-from-tag="handleEditorRemoveFromTag"
           @toggle-fullscreen="handleToggleFullscreen"
           @selection-change="onSelectionChange"
-        />
+        >
+          <template #overlay>
+            <CandidatePanel
+              @navigateToDocument="handleCandidateNavigateToDocument"
+              @navigateToMaterial="handleCandidateNavigateToMaterial"
+            />
+          </template>
+        </RichEditor>
 
         <!-- 写作工作台（问答弹窗，Teleported） -->
         <ComposeWorkbench
@@ -2086,9 +2159,22 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">归属显示</b> — 每个文档下方标注所属文件夹名称和最近更新时间
               </p>
             </div>
-            <!-- 3. 版本管理 & Diff -->
+            <!-- 3. 全局搜索 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">3. 版本管理 &amp; Diff 对比</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">3. 全局搜索</h3>
+              <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
+                左侧面板的<b class="text-gray-800 dark:text-gray-200">「搜索」🔍</b>子标签页支持全文检索：<br/>
+                • <b class="text-gray-800 dark:text-gray-200">统一搜索</b> — 同时搜索所有文档和素材，输入至少 2 个字符自动触发（防抖 300ms）<br/>
+                • <b class="text-gray-800 dark:text-gray-200">中文分词</b> — 基于 jieba 分词 + SQLite FTS5，支持精确匹配和分词搜索<br/>
+                • <b class="text-gray-800 dark:text-gray-200">命中高亮</b> — 搜索结果中关键词以 mark 标签高亮，展示上下文片段<br/>
+                • <b class="text-gray-800 dark:text-gray-200">来源标识</b> — 结果按「文档」/「素材」分类，显示更新时间<br/>
+                • <b class="text-gray-800 dark:text-gray-200">点击导航</b> — 点击结果自动跳转到对应文档或素材，编辑器内同步高亮全部命中位置并定位到首个匹配<br/>
+                • <b class="text-gray-800 dark:text-gray-200">搜索历史</b> — 自动记录最近 20 条搜索词，可点击复用或清空
+              </p>
+            </div>
+            <!-- 4. 版本管理 & Diff -->
+            <div>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">4. 版本管理 &amp; Diff 对比</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 类似 Git 的文档版本管理系统，让你放心修改、轻松回溯：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">提交版本</b> — 在顶部工具栏输入提交信息（可选，默认时间命名），点击「提交版本」保存当前文档快照<br/>
@@ -2096,9 +2182,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">「Diff」标签页</b> — 先选旧版，再选新版，点击「开始对比」。新增内容以<span class="text-green-600 dark:text-green-400">绿色</span>高亮，删除内容以<span class="text-amber-600 dark:text-amber-400">琥珀色</span>高亮。支持<span class="text-emerald-700 dark:text-emerald-300">行内词级差异</span>细粒度展示，显示新增/删除行数统计
               </p>
             </div>
-            <!-- 4. AI 智能分析 -->
+            <!-- 5. AI 智能分析 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">4. AI 智能分析</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">5. AI 智能分析</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「AI分析」</b>标签页，AI 对两个版本间的修改进行<b class="text-gray-800 dark:text-gray-200">多维度结构化评审</b>：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">总体评估</b> — 新旧版本评分对比、提升/退步/持平判决、综合分析总结<br/>
@@ -2112,9 +2198,9 @@ async function handleExportWord() {
                 分析结果<b class="text-gray-800 dark:text-gray-200">自动缓存</b>，下次打开同版对直接加载无需重复请求，大幅节省 token 消耗。
               </p>
             </div>
-            <!-- 5. AI 对话 -->
+            <!-- 6. AI 对话 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">5. AI 对话</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">6. AI 对话</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「AI对话」</b>标签页，与 AI 进行多轮自然语言对话：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">多对话管理</b> — 创建/切换/重命名/删除多个独立对话，互不干扰<br/>
@@ -2126,9 +2212,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">快捷输入</b> — Enter 发送，Shift+Enter 换行
               </p>
             </div>
-            <!-- 6. 写作技能 -->
+            <!-- 7. 写作技能 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">6. 写作技能</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">7. 写作技能</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「技能」</b>标签页，技能按分类分组：<span class="text-red-600 dark:text-red-400">纠错</span> / <span class="text-yellow-600 dark:text-yellow-400">润色</span> / <span class="text-purple-600 dark:text-purple-400">创意</span> / <span class="text-blue-600 dark:text-blue-400">自定义</span>：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">智能选区</b> — 在编辑器中选中文本后切换到技能页，对选中文本执行；未选择则对全文执行<br/>
@@ -2138,9 +2224,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">技能管道（Pipeline）</b> — 点击「▶ 管道执行」，多技能串行执行。显示步骤进度（呼吸灯动画），完成后 diff 回放逐操作高亮展示改动。适合批量质检：纠错→审校→润色→定稿
               </p>
             </div>
-            <!-- 7. 智能写作流水线 -->
+            <!-- 8. 智能写作流水线 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">7. ⭐ 智能写作流水线（核心功能）</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">8. ⭐ 智能写作流水线（核心功能）</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「写作」</b>标签页选择菜谱后，进入<b class="text-gray-800 dark:text-gray-200">五阶段全流程 AI 写作</b>：<br/><br/>
                 <b class="text-gray-800 dark:text-gray-200">阶段一：信息采集（采访）</b><br/>
@@ -2155,9 +2241,9 @@ async function handleExportWord() {
                 诊断+修复两步流程，diff 动画展示所有改动。完成后输出全文 + 审查记录 + 润色记录。
               </p>
             </div>
-            <!-- 8. 写作菜谱 -->
+            <!-- 9. 写作菜谱 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">8. 写作菜谱</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">9. 写作菜谱</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「写作」</b>标签页管理写作模板：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">10 种内置菜谱</b> — 述职报告、领导讲话、工作总结、研讨材料、通讯简报、课题研究、工作通知、规章制度、经验材料、工作汇报<br/>
@@ -2165,9 +2251,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">知识库预设</b> — 内置菜谱已关联专业知识库，点击即可开始引导式写作
               </p>
             </div>
-            <!-- 9. 知识库 -->
+            <!-- 10. 知识库 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">9. 知识库</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">10. 知识库</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「知识库」</b>标签页管理 AI 参考资料：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">新建知识库</b> — 点击「+ 新建知识库」，选择 <b class="text-gray-800 dark:text-gray-200">.docx</b>、<b class="text-gray-800 dark:text-gray-200">.txt</b> 或 <b class="text-gray-800 dark:text-gray-200">.md</b> 文件，系统自动解析文本内容，名称自动规范化<br/>
@@ -2176,9 +2262,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">跨模块引用</b> — 知识库可在 AI 对话、写作技能、写作菜谱中被引用，为 AI 提供专业领域知识
               </p>
             </div>
-            <!-- 10. 素材库 & 浏览器剪藏 -->
+            <!-- 11. 素材库 & 浏览器剪藏 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">10. 素材库 &amp; 浏览器剪藏</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">11. 素材库 &amp; 浏览器剪藏</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 左侧面板的<b class="text-gray-800 dark:text-gray-200">「素材」</b>子标签页管理写作素材和网页剪藏：<br/><br/>
                 <b class="text-gray-800 dark:text-gray-200">标签管理</b><br/>
@@ -2198,9 +2284,23 @@ async function handleExportWord() {
                 <b class="text-gray-800 dark:text-gray-200">跨模块引用</b> — 素材库可在 AI 对话和写作技能中按标签引用。
               </p>
             </div>
-            <!-- 11. 导出 Word -->
+            <!-- 12. 候选库 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">11. 导出 Word 文档</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">12. 候选库</h3>
+              <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
+                编辑器左侧边缘的<b class="text-gray-800 dark:text-gray-200">抽拉式候选库面板</b>，用于临时收集和整理写作参考片段：<br/>
+                • <b class="text-gray-800 dark:text-gray-200">添加到候选库</b> — 编辑器中选中文本，右键 →「添加到候选库」，片段自动汇入面板<br/>
+                • <b class="text-gray-800 dark:text-gray-200">抽拉面板</b> — 点击编辑器左侧边缘的图标展开/收起，面板宽度 280px，滑入滑出带过渡动画<br/>
+                • <b class="text-gray-800 dark:text-gray-200">条目管理</b> — 每个条目显示文本内容、来源类型（文档/素材/网页）和出处信息<br/>
+                • <b class="text-gray-800 dark:text-gray-200">勾选与全选</b> — 条目可单独勾选或一键全选/取消，方便筛选待用片段<br/>
+                • <b class="text-gray-800 dark:text-gray-200">快捷操作</b> — 每条支持「复制」文字、「跳转出处」查看原文、「删除」移除<br/>
+                • <b class="text-gray-800 dark:text-gray-200">💬 对话</b> — 将选中的候选条目作为上下文发送到 AI 对话，快速综合分析多个片段<br/>
+                • <b class="text-gray-800 dark:text-gray-200">清空</b> — 底部「清空所有候选」一键清除，面板为空时自动收起
+              </p>
+            </div>
+            <!-- 13. 导出 Word -->
+            <div>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">13. 导出 Word 文档</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 点击顶部工具栏 <b class="text-gray-800 dark:text-gray-200">导出 Word</b> 一键导出 .docx。点击 <b class="text-gray-800 dark:text-gray-200">⚙ 排版设置</b> 精细化控制：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">字体配置</b> — H1~H4 标题、正文、表格分别设置字体与字号（pt），默认方正字体族<br/>
@@ -2211,9 +2311,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">恢复默认</b> — 一键重置为公文标准排版
               </p>
             </div>
-            <!-- 12. API 设置 -->
+            <!-- 14. API 设置 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">12. API 设置</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">14. API 设置</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「设置」</b>标签页配置 AI 服务：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">API 密钥</b> — 填写 DeepSeek API Key（格式：<b class="text-gray-800 dark:text-gray-200">sk-...</b>），点击 ❓ 查看申请步骤<br/>
@@ -2223,9 +2323,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">测试连接 / 查询余额</b> — 验证 API 可用性和账户余额
               </p>
             </div>
-            <!-- 13. 数据备份与恢复 -->
+            <!-- 15. 数据备份与恢复 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">13. 数据备份与恢复</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">15. 数据备份与恢复</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 在<b class="text-gray-800 dark:text-gray-200">「设置」</b>标签页底部管理数据安全：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">数据统计</b> — 查看当前文档、文件夹、知识库、素材、技能的数量<br/>
@@ -2236,7 +2336,7 @@ async function handleExportWord() {
             </div>
             <!-- 14. 文档评分 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">14. 文档综合评分</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">16. 文档综合评分</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 标题栏旁点击 <b class="text-gray-800 dark:text-gray-200">⭐ 评分</b> 按钮，AI 对当前文档进行综合质量评分：<br/>
                 • <b class="text-gray-800 dark:text-gray-200">综合评分</b> — 0~100 分，五星评级，附带鼓励语<br/>
@@ -2246,9 +2346,9 @@ async function handleExportWord() {
                 • <b class="text-gray-800 dark:text-gray-200">版本独立评分</b> — 每个历史版本也可单独评分，评分与版本绑定
               </p>
             </div>
-            <!-- 15. 编辑器高级功能 -->
+            <!-- 17. 编辑器高级功能 -->
             <div>
-              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">15. 编辑器高级功能</h3>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">17. 编辑器高级功能</h3>
               <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
                 <b class="text-gray-800 dark:text-gray-200">查找替换</b> — Ctrl+F 打开，支持大小写、正则表达式、全词匹配、逐个替换和全部替换<br/>
                 <b class="text-gray-800 dark:text-gray-200">右键菜单</b> — 剪切/复制/粘贴 + 「📦 存入素材库」 + 「💬 添加到 AI 对话」<br/>
@@ -2380,6 +2480,12 @@ async function handleExportWord() {
             @click="handleSidebarAddToChat"
           >
             <span>💬 添加到 AI 对话</span>
+          </button>
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
+            @click="handleSidebarAddToCandidate"
+          >
+            <span>📋 添加到候选库</span>
           </button>
           <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
           <button

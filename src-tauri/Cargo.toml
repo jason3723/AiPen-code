@@ -32,6 +32,7 @@ zip = "2"
 quick-xml = "0.37"
 url = "2"
 base64 = "0.22"
+jieba-rs = "0.7"
 
 # Windows 专属依赖：用于建立窗口 owner 关系（替代 always_on_top）
 [target.'cfg(target_os = "windows")'.dependencies]

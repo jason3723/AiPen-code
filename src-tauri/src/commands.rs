@@ -1,4 +1,4 @@
-use crate::{ai, db, diff, version};
+use crate::{ai, db, diff, version, tokenizer};
 use tauri::{Emitter, Manager, State};
 use serde_json;
 use std::path::{Path, PathBuf};
@@ -184,7 +184,10 @@ pub async fn create_document(
     state: State<'_, crate::AppState>,
     title: String,
 ) -> Result<db::Document, String> {
-    db::create_document(&state.db, &title).await.map_err(|e| e.to_string())
+    let doc = db::create_document(&state.db, &title).await.map_err(|e| e.to_string())?;
+    // 新文档内容为空，同步空 FTS 索引
+    let _ = db::sync_doc_fts(&state.db, &doc.id, &doc.title, "").await;
+    Ok(doc)
 }
 
 #[tauri::command]
@@ -208,7 +211,13 @@ pub async fn save_draft(
     doc_id: String,
     content: String,
 ) -> Result<(), String> {
-    db::save_draft(&state.db, &doc_id, &content).await.map_err(|e| e.to_string())
+    db::save_draft(&state.db, &doc_id, &content).await.map_err(|e| e.to_string())?;
+    // 同步 FTS 索引（失败不影响主流程）
+    if let Ok(doc) = db::get_document(&state.db, &doc_id).await {
+        let segmented = tokenizer::segment_prosemirror_json(&content);
+        let _ = db::sync_doc_fts(&state.db, &doc_id, &doc.title, &segmented).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -225,14 +234,22 @@ pub async fn update_document_title(
     doc_id: String,
     title: String,
 ) -> Result<(), String> {
-    db::update_document_title(&state.db, &doc_id, &title).await.map_err(|e| e.to_string())
+    db::update_document_title(&state.db, &doc_id, &title).await.map_err(|e| e.to_string())?;
+    // 同步 FTS 标题更新（内容不变，从 draft 重新读取）
+    if let Ok(Some(draft)) = db::get_draft(&state.db, &doc_id).await {
+        let segmented = tokenizer::segment_prosemirror_json(&draft);
+        let _ = db::sync_doc_fts(&state.db, &doc_id, &title, &segmented).await;
+    }
+    Ok(())
 }
+
 
 #[tauri::command]
 pub async fn delete_document(
     state: State<'_, crate::AppState>,
     doc_id: String,
 ) -> Result<(), String> {
+    let _ = db::delete_doc_fts(&state.db, &doc_id).await;
     db::delete_document(&state.db, &doc_id).await.map_err(|e| e.to_string())
 }
 
@@ -1525,11 +1542,18 @@ pub async fn save_material(
     source_url: Option<String>,
     source_title: Option<String>,
 ) -> Result<db::MaterialWithTags, String> {
-    db::save_material(
+    let mat = db::save_material(
         &state.db, &content,
         source_url.as_deref(),
         source_title.as_deref(),
-    ).await.map_err(|e| e.to_string())
+    ).await.map_err(|e| e.to_string())?;
+    // 同步 FTS 索引
+    let segmented = tokenizer::segment_prosemirror_json(&content);
+    let _ = db::sync_material_fts(
+        &state.db, &mat.id, &mat.title, &segmented,
+        source_title.as_deref(), source_url.as_deref(),
+    ).await;
+    Ok(mat)
 }
 
 #[tauri::command]
@@ -1539,14 +1563,25 @@ pub async fn update_material_content(
     content: String,
 ) -> Result<(), String> {
     db::update_material_content(&state.db, &mat_id, &content)
-        .await.map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())?;
+    // 同步 FTS 索引
+    let plain = tokenizer::extract_plain_text(&content);
+    let title: String = plain.chars().take(30).collect();
+    let segmented = tokenizer::segment(&plain);
+    let _ = db::sync_material_fts(
+        &state.db, &mat_id, &title, &segmented,
+        None, None,
+    ).await;
+    Ok(())
 }
+
 
 #[tauri::command]
 pub async fn delete_material(
     state: State<'_, crate::AppState>,
     mat_id: String,
 ) -> Result<(), String> {
+    let _ = db::delete_material_fts(&state.db, &mat_id).await;
     db::delete_material(&state.db, &mat_id).await.map_err(|e| e.to_string())
 }
 
@@ -1558,6 +1593,68 @@ pub async fn set_material_tags(
 ) -> Result<(), String> {
     db::set_material_tags(&state.db, &mat_id, &tag_ids)
         .await.map_err(|e| e.to_string())
+}
+
+// ─── 全域搜索命令 ────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SearchResult {
+    pub id: String,
+    pub title: String,
+    pub snippet: String,
+    pub source_type: String, // "document" | "material"
+    pub folder_id: Option<String>,
+    pub source_title: Option<String>,
+    pub source_url: Option<String>,
+    pub updated_at: String,
+}
+
+/// 搜索文档（jieba FTS + LIKE 兜底）
+#[tauri::command]
+pub async fn search_documents(
+    state: State<'_, crate::AppState>,
+    query: String,
+) -> Result<Vec<SearchResult>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let segmented = tokenizer::segment(&query);
+    let rows = db::search_documents_fts(&state.db, &segmented, &query)
+        .await.map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|r| SearchResult {
+        id: r.doc_id.unwrap_or_default(),
+        title: r.title,
+        snippet: r.snippet,
+        source_type: "document".to_string(),
+        folder_id: r.project_id,
+        source_title: None,
+        source_url: None,
+        updated_at: r.updated_at,
+    }).collect())
+}
+
+/// 搜索素材（jieba FTS + LIKE 兜底）
+#[tauri::command]
+pub async fn search_materials(
+    state: State<'_, crate::AppState>,
+    query: String,
+) -> Result<Vec<SearchResult>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let segmented = tokenizer::segment(&query);
+    let rows = db::search_materials_fts(&state.db, &segmented, &query)
+        .await.map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|r| SearchResult {
+        id: r.material_id.unwrap_or_default(),
+        title: r.title,
+        snippet: r.snippet,
+        source_type: "material".to_string(),
+        folder_id: None,
+        source_title: r.source_title,
+        source_url: r.source_url,
+        updated_at: r.updated_at,
+    }).collect())
 }
 
 // ─── 标签命令 ──────────────────────────────────────────────────
@@ -2020,10 +2117,40 @@ const BROWSER_INIT_SCRIPT: &str = r#"
           });
           menuEl.appendChild(chatItem);
 
+          // 菜单项 3: 添加到候选库
+          var candidateItem = makeItem('📋 添加到候选库', '', c);
+          candidateItem.addEventListener('mousedown', function(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (pending) return;
+            pending = true;
+
+            var savedText = text;
+            var savedUrl = window.location.href;
+            var savedTitle = document.title;
+
+            try {
+              if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
+                window.__TAURI__.event.emit('browser-add-to-candidate', {
+                  text: savedText, url: savedUrl, title: savedTitle
+                });
+              }
+            } catch(ex) {}
+
+            var encoded = encodeClipPayload(savedText, savedUrl, savedTitle);
+            var navUrl = 'https://aipen-clip.internal/candidate/' + encoded;
+            setTimeout(function() {
+              try { window.location.href = navUrl; } catch(ex) {}
+            }, 0);
+
+            delayedCleanup();
+          });
+          menuEl.appendChild(candidateItem);
+
           // 分隔线
           menuEl.appendChild(makeSeparator(c));
 
-          // 菜单项 3: 复制
+          // 菜单项 4: 复制
           var copyItem = makeItem('复制', 'Ctrl+C', c);
           copyItem.addEventListener('mousedown', function(ev) {
             ev.preventDefault();
@@ -2157,6 +2284,13 @@ pub async fn create_browser_webview(
                 let encoded = path.strip_prefix("/chat/").unwrap_or("");
                 eprintln!("[Browser] AI对话导航，base64 长度: {}", encoded.len());
                 decode_and_emit(&app_handle, encoded, "browser-add-to-chat", "__aipenReceiveChat", false);
+                return false;
+            }
+            // 拦截 https://aipen-clip.internal/candidate/<base64> → 添加到候选库
+            if path.starts_with("/candidate/") {
+                let encoded = path.strip_prefix("/candidate/").unwrap_or("");
+                eprintln!("[Browser] 候选库导航，base64 长度: {}", encoded.len());
+                decode_and_emit(&app_handle, encoded, "browser-add-to-candidate", "__aipenReceiveCandidate", false);
                 return false;
             }
         }

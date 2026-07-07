@@ -64,7 +64,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   fontH1: "方正小标宋简体",
   fontH2: "方正黑体简体",
   fontH3: "方正楷体简体",
-  fontH4: "方正楷体简体",
+  fontH4: "方正仿宋简体",
   fontBody: "方正仿宋简体",
   sizeH1: 22,
   sizeH2: 16,

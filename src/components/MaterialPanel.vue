@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { useMaterialStore, type Bookmark } from "../stores/materialStore";
 import { useConfirm } from "../composables/useConfirm";
 
@@ -8,8 +8,24 @@ const props = defineProps<{
   activeMaterialId: string | null;
 }>();
 
-// activeMaterialId 由父组件传入，保留以兼容未来可能的需求
-void (props as any);
+const store = useMaterialStore();
+
+// 响应外部导航（如搜索面板点击素材结果）：高亮对应标签组
+// 不调用 selectTagDocument（那会替换编辑器内容），只设置高亮 ID
+watch(
+  () => props.activeMaterialId,
+  (newId) => {
+    if (!newId) return;
+    const group = store.tagDocumentGroups.find(g =>
+      g.materials.some(m => m.id === newId)
+    );
+    if (group) {
+      const key = group.tag?.id ?? "__uncategorized__";
+      // 直接设 currentTagDocumentId 达到高亮效果，不触发内容替换
+      store.currentTagDocumentId = key;
+    }
+  }
+);
 
 const emit = defineEmits<{
   selectMaterial: [materialId: string];
@@ -17,7 +33,6 @@ const emit = defineEmits<{
   update: [action: string, ...args: any[]];
 }>();
 
-const store = useMaterialStore();
 const { confirm } = useConfirm();
 
 // ── 素材 Tab ──

@@ -45,7 +45,7 @@
         "minHeight": 700,
         "center": true,
         "decorations": false,
-        "devtools": false,
+        "devtools": true,
         "backgroundColor": "#1d2032"
       }
     ],

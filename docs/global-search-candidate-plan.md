@@ -345,6 +345,14 @@ search_materials,
 
 ## 四、前端改动
 
+> **⚡ 主题适配原则**：所有新增 UI 组件必须同时支持浅色和深色模式。
+> - 文字颜色：使用 Tailwind `dark:text-gray-XXX` 或项目 CSS 变量（`var(--ae-*)`）
+> - 背景色：使用 `dark:bg-gray-XXX` 或项目面板背景变量
+> - 边框/分隔线：使用 `dark:border-gray-XXX`
+> - 图标/按钮：使用 `currentColor` + Tailwind 文字色类，或 SVG 内联 `fill` 绑定主题变量
+> - 高亮/选中态：使用 `bg-blue-500/20 dark:bg-blue-500/30` 的半透明背景
+> - 参考现有组件（`MaterialPanel.vue`、`ChatPanel.vue`）的主题处理方式
+
 ### 4.1 新增 Store：`candidateStore.ts`
 
 **文件**：`src/stores/candidateStore.ts`（新建）
@@ -541,6 +549,12 @@ function clickResult(result: UnifiedSearchResult) {
   </div>
 </div>
 ```
+
+> **⚠️ 浅色/深色模式**：搜索面板渲染在左侧 `<aside>` 内，自动继承项目的暗色模式变量（`dark:` 前缀 class）。需要额外注意：
+> - `snippet` 中的 `<mark>` 标签在浅色/深色下都必须清晰可见，建议用 `bg-yellow-200 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100` 或复用编辑器搜索高亮色（`var(--ae-search-bg)`）
+> - 搜索结果 hover 背景已用 `hover:bg-gray-50 dark:hover:bg-gray-800`
+> - 空结果提示文字在深色模式下保持可读（`dark:text-gray-500`）
+> - `<mark>` 标签全局样式在 `src/assets/global.css` 中统一定义，不要在不同组件中重复定义
 
 ### 4.3 ProseMirror 高亮 + 跳转（搜索结果点击后）
 
@@ -755,6 +769,13 @@ EditorView 模板中：
   to   { transform: translateX(0); }
 }
 ```
+
+> **⚠️ 浅色/深色模式**：候选库面板使用 CSS 变量复用项目主题系统：
+> - 面板背景：`var(--ae-panel-bg)` — 自动跟随浅色/深色模式
+> - 面板边框：`var(--ae-panel-border)`
+> - 候选条目文字颜色需使用 `var(--ae-content-text)` 或 Tailwind 的 `text-gray-700 dark:text-gray-300`
+> - 三杠触发器图标在深色模式下需切换颜色（SVG `fill="currentColor"` + `text-gray-400 dark:text-gray-500`）
+> - 来源信息文字：`text-gray-400 dark:text-gray-500` 确保深色模式下不刺眼
 
 #### 4.4.4 跳转逻辑
 
