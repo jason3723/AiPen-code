@@ -57,7 +57,6 @@ const CommentMark = Mark.create({
   name: 'comment',
   inclusive: false,
   spanning: true,
-  excludable: true,
 
   addAttributes() {
     return {
@@ -82,11 +81,11 @@ const CommentMark = Mark.create({
     return ['span', { ...HTMLAttributes, class: 'comment-mark' }, 0]
   },
 
-  addCommands() {
+  addCommands(): any {
     return {
       setComment: (commentId: string) => ({ commands }: { commands: any }) =>
         commands.setMark(this.name, { commentId }),
-      unsetComment: (commentId?: string) => ({ tr, state, dispatch }: any) => {
+      unsetComment: (commentId?: string) => ({ state, dispatch }: any) => {
         // 默认：移除选区内所有 comment mark
         // 指定 commentId：仅移除该 id（用于 deleteComment 流程）
         const markType = state.schema.marks[this.name]
@@ -118,7 +117,6 @@ const CommentMark = Mark.create({
  *  - 由 RichEditor 在 store.comments 变化时通过 meta 触发重建
  */
 import type { EditorState } from 'prosemirror-state'
-import type { EditorView } from 'prosemirror-view'
 
 const commentBadgePluginKey = new PluginKey('commentBadge')
 
@@ -177,7 +175,7 @@ const CommentBadgeExt = Extension.create({
             // 初始 map 为空，由 RichEditor 首次 dispatch 注入
             return DecorationSet.create(state.doc, [])
           },
-          apply(tr, oldSet, oldState, newState) {
+          apply(tr, oldSet, _oldS, newState) {
             const meta = tr.getMeta(commentBadgePluginKey) as CommentBadgeMeta | undefined
             if (meta) {
               return DecorationSet.create(newState.doc, buildCommentDecorations(newState, meta.map))
@@ -1664,6 +1662,12 @@ async function saveImageToLocalDir(sourcePath: string): Promise<{ savedPath: str
 async function handleImagePaste(item: DataTransferItem) {
   const file = item.getAsFile()
   if (!file) return
+  // 防止超大图片导致 OOM（截图/无损原图可能上百 MB）
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
+  if (file.size > MAX_IMAGE_SIZE) {
+    alert('图片过大，请压缩后再粘贴。')
+    return
+  }
   try {
     const buf = await file.arrayBuffer()
     let ext = file.type.split('/')[1] || 'png'

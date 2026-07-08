@@ -404,18 +404,23 @@ export const useDocumentStore = defineStore("document", () => {
 
   // ── 操作 ──
 
-  /** 安装/升级新版本后首次启动时创建教程文档（不会切换过去，静默创建） */
+  /** 安装/升级后确保教程文档存在且为最新版本（不会切换过去，静默创建/替换） */
   async function createTutorialDocument() {
     try {
-      // 仅在新版本安装后首次启动时尝试创建
       const lastVersion = localStorage.getItem(LS_VERSION_KEY);
-      if (lastVersion === pkg.version) return;
+      // 版本未变且文档存在 → 无需操作
+      if (lastVersion === pkg.version) {
+        const docs = await invoke<Document[]>("list_documents");
+        if (docs.some((d: Document) => d.title === TUTORIAL_TITLE)) return;
+        // 版本未变但文档被用户误删 → 补建（不检查旧版本，直接新建）
+      }
 
       const docs = await invoke<Document[]>("list_documents");
-      // 已有教程文档 → 跳过
-      if (docs.some((d: Document) => d.title === TUTORIAL_TITLE)) {
-        localStorage.setItem(LS_VERSION_KEY, pkg.version);
-        return;
+      // 删除已存在的旧版教程（确保替换为安装包里最新版本）
+      const existing = docs.find((d: Document) => d.title === TUTORIAL_TITLE);
+      if (existing) {
+        await invoke("delete_document", { docId: existing.id });
+        documents.value = documents.value.filter(d => d.id !== existing.id);
       }
 
       const doc = await invoke<Document>("create_document", {
@@ -554,6 +559,8 @@ export const useDocumentStore = defineStore("document", () => {
     error.value = "";
     draftLoaded.value = false;
     viewingVersionId.value = ""; // 切换文档时退出历史版本查看
+    // 清理上一个文档的自动保存定时器，防止向旧 docId 写入
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
     try {
       const doc = await invoke<Document>("get_document", { docId });
       currentDocId.value = doc.id;

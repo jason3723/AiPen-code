@@ -5,7 +5,7 @@
  *  - 输入文字（<= 500 字）→ emit 'confirm'
  *  - Esc/点击取消 → emit 'cancel'
  */
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 
 const props = defineProps<{
   /** 浮层定位：top/left 为屏幕像素 */

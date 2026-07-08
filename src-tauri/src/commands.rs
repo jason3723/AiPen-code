@@ -825,16 +825,22 @@ pub async fn delete_compose_recipe(
 // ─── 精神融入：两阶段 AI 调用 ──────────────────────────────────
 
 /// 解析 AI 返回的 KB ID 列表（从 JSON 数组或含噪声的文本中提取）
-fn parse_kb_ids_from_response(text: &str) -> Result<Vec<String>, String> {
+/// 解析失败时降级返回空 Vec，不中断上层流程
+fn parse_kb_ids_from_response(text: &str) -> Vec<String> {
     let trimmed = text.trim();
     // 找第一个 [ 和最后一个 ]
     let json_str = match (trimmed.find('['), trimmed.rfind(']')) {
         (Some(s), Some(e)) if s < e => &trimmed[s..=e],
         _ => trimmed,
     };
-    let ids: Vec<String> = serde_json::from_str(json_str)
-        .map_err(|e| format!("解析知识库匹配结果失败: {}。AI 返回: {}", e, text))?;
-    Ok(ids.into_iter().take(3).collect()) // 最多取 3 个
+    let ids: Vec<String> = match serde_json::from_str::<Vec<String>>(json_str) {
+        Ok(ids) => ids,
+        Err(e) => {
+            eprintln!("[AiPen] 解析 KB ID 失败（降级为空）: {}。AI 返回: {}", e, text);
+            return Vec::new();
+        }
+    };
+    ids.into_iter().take(3).collect() // 最多取 3 个
 }
 
 /// 精神融入：阶段 1 — AI 根据摘要匹配相关 KB
@@ -860,7 +866,7 @@ async fn match_spirit_kb_ids(
         config,
     ).await.map_err(|e| e.to_string())?;
 
-    parse_kb_ids_from_response(&response)
+    Ok(parse_kb_ids_from_response(&response))
 }
 
 /// 技能执行公共前处理：load skill → config → target → KB + 素材库 → 构建 prompts

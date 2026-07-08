@@ -1,11 +1,11 @@
 {
-  "version": "3.0.5",
-  "notes": "🏗️ 浏览器窗口底层重构\n• 使用 OS 级别 Owned Window 替代 always_on_top，一次性修复 4 类窗口管理 bug：最小化跟随、Win+D 隐藏、任务栏恢复、销毁跟随\n• removed 失焦监听手动 hide 逻辑（OS 自动管理 z-order）\n• resize/close/show 命令增强 owner 关系保护\n• 前端 handleMinimize / onFocusChanged 逻辑简化",
-  "pub_date": "2026-07-06T13:11:54Z",
-  "platforms": {
-    "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkZCRWgyNDZPOHQ2Qyt6UzBrRDRGVHRmcDQ1QVhCVTJBTTVDR3ZDU1RiU1NqSlBEaGlQck01R0F3OEZiWmt1VFQ5NndiZDBVc1Z3Mnl3ZWlWV1k4Wnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQzNDc1CWZpbGU6QWlQZW5fMy4wLjVfeDY0LXNldHVwLmV4ZQpzQ3pWT1ZtdmhxNWdXTE5INXJQZUxHcVkrSDlld0FTOTFqcU43SU54RWtYRUpPbWhIK1JMdGY3czdmZWFrWk5HNWRZTFcrTGR5U21UaFdkcTNNRzJDUT09Cg==",
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_3.0.5_x64-setup.exe"
+    "version": "4.0.0",
+    "notes": "### ✨ 新增\n\n- **批注系统**：支持选中文本添加批注，侧栏列表查看/编辑/删除，批注标记高亮显示\n- **全局搜索面板**：支持跨文档和素材库全文搜索，jieba 分词 + FTS 索引\n\n### 🐛 修复\n\n- 修复 Rust 后端 parse_kb_ids_from_response 在 AI 返回非 JSON 时崩溃的问题（降级返回空数组）\n- 修复文档切换时残留自动保存定时器的问题（switchDocument 显式 clearTimeout）\n- 修复编辑器 excludable 属性在新版 TipTap 中不兼容的 TS 类型错误\n- 修复 commentInputBar 未使用导入、EditorView 未使用导入等多个 TypeScript 编译警告\n\n### 🔧 优化\n\n- 浏览器窗口交互优化：修复剪藏失败时错误静默掩盖，双通道兜底更可靠\n- 颜色方案微调，改善浅色/深色模式一致性\n- 自动保存草稿防抖和状态恢复逻辑加固",
+    "pub_date": "2026-07-08T03:33:02Z",
+    "platforms": {
+        "windows-x86_64": {
+            "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkQrek4vTXB2UVVNc1NhUUpLS2tZTTR4cmdBVTZESzdLOEY1aHpKRU5kWVltT211YzJDNUdVdWQ5U0FRQU5taDBZZDFvN0ZZYXlEMTk3UE9KVzlQeGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNDgxNTY5CWZpbGU6QWlQZW5fNC4wLjBfeDY0LXNldHVwLmV4ZQpKU2RweW5UVUxLS1pLSWEzUk1UdzVxUlFleGZHdW5BTVFXdDdLdHJSTUsrS29TZUJZYTdBVU91aERQSDRnVFljMktnMTUwbnlsSy9SSkJxcE4zNTJCZz09Cg==",
+            "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.0.0_x64-setup.exe"
+        }
     }
-  }
 }

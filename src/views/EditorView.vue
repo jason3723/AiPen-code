@@ -35,7 +35,7 @@ const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
 
 // ── 应用版本 ──
-const appVersion = "3.0.4";
+const appVersion = "4.0.0";
 
 const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
@@ -1525,10 +1525,10 @@ async function handleExportWord() {
 
     <!-- 主内容区：左文档列表 + 编辑器 + 右侧面板 -->
     <div class="flex flex-1 min-h-0 relative">
-      <!-- 左侧悬浮折叠按钮 -->
+      <!-- 左侧悬浮折叠按钮（z-index 需高于 CandidatePanel 的 100 和左侧面板的 10） -->
       <button
         v-show="!leftCollapsed"
-        class="absolute left-[12.95rem] top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        class="absolute left-[12.95rem] top-1/2 -translate-y-1/2 -translate-x-1/2 z-[110] w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
         title="折叠文档列表"
         @click="leftCollapsed = true"
       >
@@ -1536,7 +1536,7 @@ async function handleExportWord() {
       </button>
       <button
         v-show="leftCollapsed"
-        class="absolute left-0.5 top-1/2 -translate-y-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        class="absolute left-0.5 top-1/2 -translate-y-1/2 z-[110] w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
         title="展开文档列表"
         @click="leftCollapsed = false"
       >

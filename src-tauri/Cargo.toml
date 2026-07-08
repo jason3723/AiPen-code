@@ -1,6 +1,6 @@
 [package]
 name = "aipen"
-version = "3.0.5"
+version = "4.0.0"
 description = "AiPen — AI 辅助文档写作"
 authors = ["you"]
 edition = "2021"

@@ -243,7 +243,7 @@ async function loadMessages(convId: string) {
 
 async function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || !currentConvId.value) return;
+  if (!text || !currentConvId.value || loading.value.send) return;
   const quote = buildContextText() || null;
   inputText.value = "";
   pendingQuote.value = "";

@@ -347,7 +347,7 @@ async function buildDocx(parsed: ParsedDoc, settings: ExportSettings): Promise<D
                 italics: true,
               })
             : new TextRun({ text: '' }),
-        ].filter(r => r.text !== ''),
+        ].filter(r => (r as any).text !== ''),
         alignment: AlignmentType.JUSTIFIED,
         spacing: { before: 0, after: 0, line: ptToTwip(28), lineRule: 'exact' },
         indent: { firstLineChars: 200 },
