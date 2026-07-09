@@ -50,6 +50,15 @@
         height: 100vh;
         background-color: var(--ae-boot-bg);
       }
+
+      /* 打印时允许页面溢出 + 白色背景 */
+      @media print {
+        html, body, #root {
+          overflow: visible !important;
+          background: white !important;
+          height: auto !important;
+        }
+      }
     </style>
   </head>
   <body>

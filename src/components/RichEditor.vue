@@ -31,6 +31,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document'
 import { useMaterialStore } from '../stores/materialStore'
 import { useCandidateStore } from '../stores/candidateStore'
+import { useCompareStore } from '../stores/compareStore'
 import { useExportSettingsStore } from '../stores/exportSettings'
 import { textToDocJson } from '../utils/textToDocJson'
 
@@ -329,6 +330,7 @@ const emit = defineEmits<{
 const docStore = useDocumentStore()
 const materialStore = useMaterialStore()
 const candidateStore = useCandidateStore()
+const compareStore = useCompareStore()
 const exportSettingsStore = useExportSettingsStore()
 
 // ── 排版设置联动：字号与行间距 ──
@@ -685,7 +687,13 @@ function applySearchDecorations() {
   ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, decos))
 }
 
-function printDocument() { window.print() }
+function printDocument() {
+  // 打印前滚动到顶部，确保完整渲染
+  const ce = document.querySelector('.rich-content')
+  if (ce) ce.scrollTop = 0
+  // 延迟打印让 DOM 更新生效
+  requestAnimationFrame(() => window.print())
+}
 function toggleSearch() {
   searchOpen.value = !searchOpen.value
   if (searchOpen.value) {
@@ -876,7 +884,13 @@ async function execCtxMenuPaste() {
   try {
     const text = await navigator.clipboard.readText()
     if (text) {
-      ed.chain().focus().insertContent(text).run()
+      // ★ 使用 textToDocJson 解析多段落文本为 ProseMirror JSON 节点，
+      //    避免 insertContent("段落A\n段落B") 产生 hardBreak 内联节点，
+      //    导致后续 Enter 拆分段落时光标位置映射偏移。
+      const doc = textToDocJson(text)
+      if (doc.content && doc.content.length > 0) {
+        ed.chain().focus().insertContent(doc.content).run()
+      }
     }
   } catch { /* 剪贴板读取失败 */ }
   ed.commands.focus()
@@ -908,6 +922,11 @@ function execCtxMenuAddToCandidate() {
     sourceId: isDoc ? docStore.currentDocId : (materialStore.currentMaterialId || ''),
     sourceTitle: isDoc ? docStore.currentTitle : (materialStore.currentMaterial?.title || ''),
   })
+  closeCtxMenu()
+}
+function execCtxMenuAddToCompare() {
+  if (!ctxMenuSelText.value) return
+  compareStore.addEntry(ctxMenuSelText.value, '编辑器选中')
   closeCtxMenu()
 }
 function execCtxMenuInsertToChat() {
@@ -1007,6 +1026,26 @@ let syncDepth = 0
 let initialized = false
 /** IME 组合输入期间标记（compositionstart → compositionend），防止中途 emit 破坏输入法状态 */
 let isComposing = false
+
+/**
+ * 稳定 JSON 序列化：递归排序对象 key，确保结构一致时字符串也一致。
+ * 用于安全对比 ProseMirror JSON，避免属性排序差异导致误判。
+ */
+function stableJSON(obj: unknown): string {
+  if (obj === null || obj === undefined) return String(obj)
+  if (typeof obj !== 'object') return JSON.stringify(obj)
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(item => stableJSON(item)).join(',') + ']'
+  }
+  const keys = Object.keys(obj as Record<string, unknown>).sort()
+  const pairs = keys.map(k => {
+    const v = (obj as Record<string, unknown>)[k]
+    // 跳过 null 值属性（ProseMirror 默认会省略，避免对比不一致）
+    if (v === null) return null
+    return JSON.stringify(k) + ':' + stableJSON(v)
+  }).filter(Boolean)
+  return '{' + pairs.join(',') + '}'
+}
 
 /** 将纯文本字符偏移映射为 ProseMirror 文档位置（1-based） */
 function textOffsetToDocPos(ed: any, targetOffset: number): number {
@@ -1137,8 +1176,8 @@ const editor = useEditor({
     // IME 组合输入期间跳过：避免中途 emit 破坏输入法 composition 状态
     if (isComposing) return
     extractHeadings(editor.value)
-    // ★ 核心保护：初始化期间 / 程序化同步期间，不 emit
-    if (!initialized || syncDepth > 0) return
+    // ★ 核心保护：初始化期间 / 程序化同步期间 / syncing 标记期间，不 emit
+    if (!initialized || syncDepth > 0 || syncing) return
     const ed = editor.value
     if (!ed) return
 
@@ -1146,14 +1185,14 @@ const editor = useEditor({
       // 素材模式：发射 ProseMirror JSON（与文档模式一致，避免无限循环）
       const json = ed.getJSON()
       const current = typeof props.modelValue === 'object' ? props.modelValue : null
-      if (JSON.stringify(json) !== JSON.stringify(current)) {
+      if (stableJSON(json) !== stableJSON(current)) {
         emit('update:modelValue', json)
       }
     } else {
       // 文档模式：发射 ProseMirror JSON
       const json = ed.getJSON()
       const current = typeof props.modelValue === 'object' ? props.modelValue : null
-      if (JSON.stringify(json) !== JSON.stringify(current)) {
+      if (stableJSON(json) !== stableJSON(current)) {
         emit('update:modelValue', json)
       }
     }
@@ -1210,7 +1249,7 @@ const editor = useEditor({
           extractHeadings(ed)
           const json = ed.getJSON()
           const current = typeof props.modelValue === 'object' ? props.modelValue : null
-          if (JSON.stringify(json) !== JSON.stringify(current)) {
+          if (stableJSON(json) !== stableJSON(current)) {
             emit('update:modelValue', json)
           }
         }, 0)
@@ -1276,8 +1315,8 @@ const editor = useEditor({
         // 根据菜单内容估算尺寸
         const isDoc = !props.editMode || props.editMode === 'document'
         const hasText = !!selText
-        // 文档模式 + 有选区：含「💬 插入批注」多一项（+28px）
-        let menuH = isDoc ? (hasText ? 218 : 105) : (hasText ? 200 : 70)
+        // 含新增「🔍 加入比对」一项（各 +28px）
+        let menuH = isDoc ? (hasText ? 246 : 105) : (hasText ? 228 : 70)
         const { x, y } = editorSmartMenuPos(event.clientX, event.clientY, 200, menuH)
         ctxMenuX.value = x
         ctxMenuY.value = y
@@ -1334,10 +1373,19 @@ watch(
     if (props.editMode === 'material') {
       // 素材模式：比较 ProseMirror JSON（与文档模式一致）
       const currentJson = ed.getJSON()
-      if (typeof newVal === 'object' && JSON.stringify(newVal) !== JSON.stringify(currentJson)) {
+      if (typeof newVal === 'object' && stableJSON(newVal) !== stableJSON(currentJson)) {
         syncing = true
+        syncDepth++
+        // ★ 保存当前光标位置，setContent 后恢复
+        const selFrom = ed.state.selection.from
         const prepared = await prepareContent(newVal)
         ed.commands.setContent(prepared)
+        // 尝试恢复到接近原来的位置（文档结构可能已变，尽量恢复）
+        try {
+          const resolvedPos = Math.min(selFrom, ed.state.doc.content.size)
+          ed.commands.setTextSelection(resolvedPos)
+        } catch { /* 位置无效则保持默认 */ }
+        syncDepth = Math.max(0, syncDepth - 1)
         syncing = false
         extractHeadings(ed)
       } else if (typeof newVal === 'string') {
@@ -1349,10 +1397,18 @@ watch(
     } else {
       // 文档模式：比较 ProseMirror JSON
       const currentJson = ed.getJSON()
-      if (typeof newVal === 'object' && JSON.stringify(newVal) !== JSON.stringify(currentJson)) {
+      if (typeof newVal === 'object' && stableJSON(newVal) !== stableJSON(currentJson)) {
         syncing = true
+        syncDepth++
+        // ★ 保存当前光标位置，setContent 后恢复
+        const selFrom = ed.state.selection.from
         const prepared = await prepareContent(newVal)
         ed.commands.setContent(prepared)
+        try {
+          const resolvedPos = Math.min(selFrom, ed.state.doc.content.size)
+          ed.commands.setTextSelection(resolvedPos)
+        } catch { /* 位置无效则保持默认 */ }
+        syncDepth = Math.max(0, syncDepth - 1)
         syncing = false
         extractHeadings(ed)
       } else if (typeof newVal === 'string') {
@@ -1427,11 +1483,25 @@ function onCommentJumpFromTooltip(e: Event) {
   const detail = (e as CustomEvent<{ commentId: string }>).detail
   if (detail?.commentId) onCommentListJump(detail.commentId)
 }
+/** 全局拦截 Ctrl+F，防止浏览器原生查找栏弹出（连点两次时焦点可能在搜索输入框而非编辑器） */
+function onGlobalKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault()
+    if (!searchOpen.value) {
+      searchOpen.value = true
+      setTimeout(() => searchInputRef.value?.focus(), 50)
+    } else {
+      searchInputRef.value?.focus()
+    }
+  }
+}
 onMounted(() => {
   window.addEventListener('comment-jump', onCommentJumpFromTooltip)
+  document.addEventListener('keydown', onGlobalKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comment-jump', onCommentJumpFromTooltip)
+  document.removeEventListener('keydown', onGlobalKeydown)
 })
 
 // ── 工具栏操作 ──
@@ -1970,6 +2040,63 @@ function btnClass(active: boolean) {
         <div v-if="headingDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
       </div>
 
+      <!-- ── 字体、字号（与文字样式同组） -->
+      <div class="relative">
+        <button
+          class="rich-btn min-w-[100px] flex items-center gap-0.5 text-[11px]"
+          @mousedown.prevent="toggleFontDropdown"
+        >
+          <span class="whitespace-nowrap">{{ fontFamily }}</span>
+          <span v-html="svg.chevronDown" class="flex items-center shrink-0" :class="{ 'rotate-180': fontDropdownOpen }" />
+        </button>
+        <div
+          v-if="fontDropdownOpen"
+          class="rich-dropdown absolute top-full left-0 mt-1 w-36 py-1 z-50 max-h-48 overflow-y-auto"
+          :style="{ backgroundColor: ddBg, borderColor: ddBorder }"
+          @click.stop
+        >
+          <div
+            v-for="f in fontOptions"
+            :key="f"
+            class="rich-dropdown-item text-[11px]"
+            :class="{ 'rich-dropdown-active': fontFamily === f }"
+            @mousedown.prevent="setFontFamily(f); fontDropdownOpen = false"
+          >
+            {{ f }}
+          </div>
+        </div>
+        <div v-if="fontDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
+      </div>
+
+      <div class="relative">
+        <div class="relative">
+          <button
+            class="rich-btn min-w-[44px] flex items-center gap-0.5 text-[11px]"
+            @mousedown.prevent="toggleFontSizeDropdown"
+          >
+            <span>{{ currentFontSizeLabel }}</span>
+            <span v-html="svg.chevronDown" class="flex items-center" :class="{ 'rotate-180': fontSizeDropdownOpen }" />
+          </button>
+          <div
+            v-if="fontSizeDropdownOpen"
+            class="rich-dropdown absolute top-full left-0 mt-1 w-16 py-1 z-50"
+            :style="{ backgroundColor: ddBg, borderColor: ddBorder }"
+            @click.stop
+          >
+            <div
+              v-for="s in fontSizeMap"
+              :key="s.label"
+              class="rich-dropdown-item text-[11px] justify-center"
+              :class="{ 'rich-dropdown-active': currentFontSizeLabel === s.label }"
+              @mousedown.prevent="setFontSize(s.label); fontSizeDropdownOpen = false"
+            >
+              {{ s.label }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="fontSizeDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
+
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
       <!-- ── 段落排列 ── -->
@@ -2063,64 +2190,7 @@ function btnClass(active: boolean) {
       <button title="查找替换 Ctrl+F" class="rich-btn" :class="{ 'rich-btn-active': searchOpen }" @mousedown.prevent="toggleSearch" v-html="svg.search" />
       <button title="打印文档" class="rich-btn" @click="printDocument" v-html="svg.printer" />
 
-      <!-- ── 右侧：字体 / 字号 ── -->
       <div class="flex-1" />
-
-      <div class="relative">
-        <button
-          class="rich-btn min-w-[100px] flex items-center gap-0.5 text-[11px]"
-          @mousedown.prevent="toggleFontDropdown"
-        >
-          <span class="whitespace-nowrap">{{ fontFamily }}</span>
-          <span v-html="svg.chevronDown" class="flex items-center shrink-0" :class="{ 'rotate-180': fontDropdownOpen }" />
-        </button>
-        <div
-          v-if="fontDropdownOpen"
-          class="rich-dropdown absolute top-full right-0 mt-1 w-36 py-1 z-50 max-h-48 overflow-y-auto"
-          :style="{ backgroundColor: ddBg, borderColor: ddBorder }"
-          @click.stop
-        >
-          <div
-            v-for="f in fontOptions"
-            :key="f"
-            class="rich-dropdown-item text-[11px]"
-            :class="{ 'rich-dropdown-active': fontFamily === f }"
-            @mousedown.prevent="setFontFamily(f); fontDropdownOpen = false"
-          >
-            {{ f }}
-          </div>
-        </div>
-        <div v-if="fontDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
-      </div>
-
-      <div class="relative">
-        <div class="relative">
-          <button
-            class="rich-btn min-w-[44px] flex items-center gap-0.5 text-[11px]"
-            @mousedown.prevent="toggleFontSizeDropdown"
-          >
-            <span>{{ currentFontSizeLabel }}</span>
-            <span v-html="svg.chevronDown" class="flex items-center" :class="{ 'rotate-180': fontSizeDropdownOpen }" />
-          </button>
-          <div
-            v-if="fontSizeDropdownOpen"
-            class="rich-dropdown absolute top-full right-0 mt-1 w-16 py-1 z-50"
-            :style="{ backgroundColor: ddBg, borderColor: ddBorder }"
-            @click.stop
-          >
-            <div
-              v-for="s in fontSizeMap"
-              :key="s.label"
-              class="rich-dropdown-item text-[11px] justify-center"
-              :class="{ 'rich-dropdown-active': currentFontSizeLabel === s.label }"
-              @mousedown.prevent="setFontSize(s.label); fontSizeDropdownOpen = false"
-            >
-              {{ s.label }}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-if="fontSizeDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
@@ -2285,10 +2355,13 @@ function btnClass(active: boolean) {
             <span>💬 添加到 AI 对话</span><span class="ctx-shortcut" />
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddComment">
-            <span>💬 插入批注</span><span class="ctx-shortcut" />
+            <span>📍 插入批注</span><span class="ctx-shortcut" />
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
             <span>📋 添加到候选库</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCompare">
+            <span>↔️ 加入比对</span><span class="ctx-shortcut" />
           </div>
         </template>
       </template>
@@ -2304,6 +2377,9 @@ function btnClass(active: boolean) {
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
             <span>📋 添加到候选库</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCompare">
+            <span>↔️ 加入比对</span><span class="ctx-shortcut" />
           </div>
         </template>
         <div class="ctx-separator" />

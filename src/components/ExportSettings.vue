@@ -54,7 +54,7 @@ const labelSm = 'text-[10px] text-gray-400 dark:text-gray-500 shrink-0';
   <Teleport to="body">
     <div
       v-if="show"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md"
+      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-md"
       @click.self="cancel"
     >
       <div class="bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl shadow-2xl w-[560px]">

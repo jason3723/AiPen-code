@@ -440,7 +440,7 @@ const appVersion = pkg.version;
 <template>
   <div class="space-y-4">
     <div class="flex items-center gap-2">
-      <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+      <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
         DeepSeek API 设置
       </h3>
       <button
@@ -461,7 +461,7 @@ const appVersion = pkg.version;
       <input
         v-model="apiConfig.api_key"
         type="password"
-        class="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 font-mono focus:border-blue-500 focus:outline-none"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 font-mono focus:border-blue-500 focus:outline-none"
         placeholder="sk-..."
       />
     </div>
@@ -471,7 +471,7 @@ const appVersion = pkg.version;
       <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">模型</label>
       <select
         v-model="apiConfig.model"
-        class="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none"
       >
         <option
           v-for="m in MODELS"
@@ -513,8 +513,8 @@ const appVersion = pkg.version;
       <select
         v-model="apiConfig.reasoning_effort"
         :disabled="thinkingDisabled"
-        class="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-        :class="thinkingDisabled ? 'text-gray-500 dark:text-gray-600' : 'text-gray-800 dark:text-gray-200'"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+        :class="thinkingDisabled ? 'text-gray-400 dark:text-gray-500' : 'text-gray-800 dark:text-gray-200'"
       >
         <option
           v-for="e in REASONING_EFFORTS"
@@ -524,7 +524,7 @@ const appVersion = pkg.version;
           {{ e.label }}
         </option>
       </select>
-      <p class="text-xs mt-1" :class="thinkingDisabled ? 'text-gray-300 dark:text-gray-700' : 'text-gray-500 dark:text-gray-600'">
+      <p class="text-xs mt-1" :class="thinkingDisabled ? 'text-gray-400 dark:text-gray-500' : 'text-gray-500 dark:text-gray-400'">
         思考强度仅思考模式开启时生效
       </p>
     </div>
@@ -532,16 +532,25 @@ const appVersion = pkg.version;
     <!-- 操作按钮 -->
     <div class="flex gap-2">
       <button
-        class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+        class="inline-flex items-center justify-center gap-1.5 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
         @click="handleSave"
       >
+        <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
         保存设置
       </button>
       <button
-        class="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-800 dark:text-gray-200 text-sm rounded-lg transition-colors"
+        class="inline-flex items-center justify-center gap-1.5 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
         :disabled="testing"
         @click="handleTest"
       >
+        <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/>
+          <path d="M12 5l7 7-7 7"/>
+        </svg>
         {{ testing ? "测试中..." : "测试连接" }}
       </button>
     </div>
@@ -551,8 +560,8 @@ const appVersion = pkg.version;
       v-if="saveResult"
       class="text-sm p-3 rounded-lg"
       :class="{
-        'bg-green-100 dark:bg-green-950/50 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-300': saveResult.type === 'success',
-        'bg-red-100 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-300': saveResult.type === 'failure',
+        'bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400': saveResult.type === 'success',
+        'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400': saveResult.type === 'failure',
       }"
     >
       <p class="whitespace-pre-wrap">{{ saveResult.message }}</p>
@@ -563,8 +572,8 @@ const appVersion = pkg.version;
       v-if="testResult"
       class="text-sm p-3 rounded-lg"
       :class="{
-        'bg-green-100 dark:bg-green-950/50 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-300': testResult.type === 'success',
-        'bg-red-100 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-300': testResult.type === 'failure',
+        'bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400': testResult.type === 'success',
+        'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400': testResult.type === 'failure',
       }"
     >
       <p class="whitespace-pre-wrap break-all">{{ testResult.message }}</p>
@@ -605,7 +614,7 @@ const appVersion = pkg.version;
       <div class="grid grid-cols-3 gap-2 mb-3">
         <button
           v-for="item in [
-            { key: 'documents' as const, label: '文档', title: '含草稿与所有版本。批注作为 doc 内部 JSON 字段随文档自动包含，无需单独勾选。' },
+            { key: 'documents' as const, label: '文档', title: '' },
             { key: 'knowledge_bases' as const, label: '知识库', title: '' },
             { key: 'materials' as const, label: '素材', title: '' },
             { key: 'skills' as const, label: '技能', title: '' },
@@ -617,41 +626,51 @@ const appVersion = pkg.version;
           :title="item.title || undefined"
           class="inline-flex items-center justify-center px-1 py-[6px] text-[10px] leading-none rounded-md cursor-pointer select-none transition-all duration-150 whitespace-nowrap border"
           :class="exportSelections[item.key]
-            ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-500/40 font-medium'
-            : 'bg-gray-100/60 dark:bg-gray-800/50 text-gray-600 dark:text-gray-400 border-gray-300/60 dark:border-gray-700/60 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 hover:text-gray-700 dark:hover:text-gray-300'"
+            ? 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border-gray-400 dark:border-gray-500 font-medium'
+            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300'"
           @click.prevent="exportSelections[item.key] = !exportSelections[item.key]"
         >
           {{ item.label }} {{ backupStats[item.key] }}
         </button>
       </div>
 
-      <!-- 操作按钮：与上方等宽 grid -->
-      <div class="grid grid-cols-5 gap-2 mb-1">
+      <!-- 操作按钮：与上方等宽 flex -->
+      <div class="flex gap-2 mb-1">
         <button
-          class="col-span-3 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-lg transition-colors whitespace-nowrap font-medium"
+          class="inline-flex items-center justify-center gap-1.5 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors whitespace-nowrap font-medium"
           :disabled="exporting"
           @click="handleExport"
         >
-          📦 {{ exporting ? "导出中..." : "导出选中数据" }}
+          <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          {{ exporting ? "导出中..." : "导出选中数据" }}
         </button>
         <button
-          class="col-span-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-800 dark:text-gray-200 text-xs rounded-lg transition-colors whitespace-nowrap"
+          class="inline-flex items-center justify-center gap-1.5 flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors whitespace-nowrap"
           :disabled="importing"
           @click="handleImport"
         >
-          📥 {{ importing ? "导入中..." : "导入数据" }}
+          <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          {{ importing ? "导入中..." : "导入数据" }}
         </button>
       </div>
 
-      <p class="text-[11px] text-gray-500 dark:text-gray-600 pl-0.5">增量导入 · 不含密钥 · 批注随文档/版本自动包含</p>
+      <p class="text-[11px] text-gray-500 dark:text-gray-400 pl-0.5">勾选上方类别，仅导出选定数据</p>
 
       <!-- 备份结果 -->
       <div
         v-if="backupResult"
         class="text-sm p-3 rounded-lg mt-3"
         :class="{
-          'bg-green-100 dark:bg-green-950/50 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-300': backupResult.type === 'success',
-          'bg-red-100 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-300': backupResult.type === 'failure',
+          'bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400': backupResult.type === 'success',
+          'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400': backupResult.type === 'failure',
         }"
       >
         <p class="whitespace-pre-wrap break-all">{{ backupResult.message }}</p>
@@ -663,7 +682,7 @@ const appVersion = pkg.version;
 
     <!-- 软件更新 -->
     <div>
-      <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider mb-3">
+      <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">
         软件更新
       </h3>
 
@@ -678,7 +697,7 @@ const appVersion = pkg.version;
 
       <!-- checking -->
       <div v-if="updateState.phase === 'checking' || checkingUpdate" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 py-2">
-        <svg class="animate-spin w-4 h-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <svg class="animate-spin w-4 h-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
@@ -720,14 +739,14 @@ const appVersion = pkg.version;
 
         <div class="flex gap-2">
           <button
-            class="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
             :disabled="downloadingUpdate"
             @click="handleDownload"
           >
             {{ downloadingUpdate ? "下载中..." : "立即更新" }}
           </button>
           <button
-            class="px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
+            class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
             :disabled="downloadingUpdate"
             @click="updateState.phase = 'up-to-date'"
           >
@@ -740,7 +759,7 @@ const appVersion = pkg.version;
       <div v-else-if="updateState.phase === 'error'" class="bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900/30 rounded-lg px-3 py-2 space-y-2">
         <p class="text-sm text-red-600 dark:text-red-400 break-all">{{ updateState.errorMessage || updateError }}</p>
         <button
-          class="px-3 py-1.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-800 dark:text-gray-200 text-sm rounded-lg transition-colors"
+          class="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
           :disabled="checkingUpdate"
           @click="handleCheckUpdate"
         >
@@ -751,7 +770,7 @@ const appVersion = pkg.version;
       <!-- manual check button (idle or up-to-date states) -->
       <div v-if="updateState.phase === 'idle' || updateState.phase === 'up-to-date'" class="mt-2">
         <button
-          class="px-3 py-1.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-800 dark:text-gray-200 text-xs rounded-lg transition-colors"
+          class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 text-xs rounded-lg transition-colors"
           :disabled="checkingUpdate"
           @click="handleCheckUpdate"
         >
@@ -764,7 +783,7 @@ const appVersion = pkg.version;
     <Teleport to="body">
       <div
         v-if="showHelpModal"
-        class="fixed inset-0 z-50 flex items-center justify-center"
+        class="fixed inset-0 z-[200] flex items-center justify-center"
         @click.self="showHelpModal = false"
       >
         <!-- 遮罩 -->
@@ -796,7 +815,7 @@ const appVersion = pkg.version;
                 <li>进入控制台，点击左侧菜单「API Keys」</li>
                 <li>点击「创建 API Key」，输入名称后点击创建</li>
                 <li>复制生成的密钥（格式为 <code class="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-700 dark:text-gray-300">sk-xxxxxxxxxxxxxxxx</code>）</li>
-                <li class="text-yellow-700/80 dark:text-yellow-400/80">⚠ 密钥仅显示一次，请妥善保管！</li>
+                <li class="text-amber-600 dark:text-amber-400">⚠ 密钥仅显示一次，请妥善保管！</li>
               </ol>
             </section>
 
@@ -837,7 +856,7 @@ const appVersion = pkg.version;
           <!-- 底部 -->
           <div class="border-t border-gray-200 dark:border-gray-800 px-5 py-3 flex justify-end">
             <button
-              class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+              class="px-4 py-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-lg transition-colors"
               @click="showHelpModal = false"
             >
               知道了

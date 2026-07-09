@@ -30,6 +30,7 @@ import MaterialClipDialog from "../components/MaterialClipDialog.vue";
 import FeedbackDialog from "../components/FeedbackDialog.vue";
 import { useTheme } from "../stores/theme";
 import { useCandidateStore } from "../stores/candidateStore";
+import { useCompareStore } from "../stores/compareStore";
 
 const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
@@ -41,6 +42,7 @@ const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
 const materialStore = useMaterialStore();
 const candidateStore = useCandidateStore();
+const compareStore = useCompareStore();
 const {
   documents,
   currentContent,
@@ -135,7 +137,7 @@ function onSidebarContextMenu(event: MouseEvent) {
   const text = sel ? sel.toString().trim() : '';
   // 根据是否有选中文字切换菜单类型，并智能定位
   if (text) {
-    const { x, y } = smartMenuPos(event.clientX, event.clientY, 200, 165);
+    const { x, y } = smartMenuPos(event.clientX, event.clientY, 200, 195);
     ctxMenu.value = { show: true, x, y, type: 'text', selectedText: text };
   } else {
     const { x, y } = smartMenuPos(event.clientX, event.clientY, 128, 110);
@@ -172,6 +174,13 @@ function handleSidebarAddToCandidate() {
       sourceId: store.currentDocId,
       sourceTitle: store.currentTitle,
     });
+  }
+  onClickAwayContextMenu();
+}
+function handleSidebarAddToCompare() {
+  const text = ctxMenu.value.selectedText;
+  if (text) {
+    compareStore.addEntry(text, '侧栏选中');
   }
   onClickAwayContextMenu();
 }
@@ -305,6 +314,11 @@ const displayedContent = computed({
     }
   },
 });
+
+// 文档切换时加载/保存比对数据
+watch(() => store.currentDocId, (id) => {
+  compareStore.initDoc(id)
+}, { immediate: true })
 
 // 从文档模式切换到其他模式时，自动保存草稿
 watch(leftSubTab, async (_newTab, oldTab) => {
@@ -1990,7 +2004,8 @@ async function handleExportWord() {
         </nav>
 
         <!-- Tab 内容 -->
-        <div class="flex-1 overflow-y-auto p-4">
+        <div class="flex-1 overflow-y-auto pl-4 py-4">
+          <div class="pr-4 h-full">
           <!-- 全局错误 -->
           <div
             v-if="error"
@@ -2027,6 +2042,7 @@ async function handleExportWord() {
             @start="handleComposeStart"
           />
           <ApiSettings v-show="sidebarTab === 'settings'" />
+          </div>
         </div>
       </aside>
     </div>
@@ -2500,6 +2516,12 @@ async function handleExportWord() {
             @click="handleSidebarAddToCandidate"
           >
             <span>📋 添加到候选库</span>
+          </button>
+          <button
+            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
+            @click="handleSidebarAddToCompare"
+          >
+            <span>↔️ 加入比对</span>
           </button>
           <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
           <button

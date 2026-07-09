@@ -1,11 +1,11 @@
 {
-    "version": "4.0.0",
-    "notes": "### ✨ 新增\n\n- **批注系统**：支持选中文本添加批注，侧栏列表查看/编辑/删除，批注标记高亮显示\n- **全局搜索面板**：支持跨文档和素材库全文搜索，jieba 分词 + FTS 索引\n\n### 🐛 修复\n\n- 修复 Rust 后端 parse_kb_ids_from_response 在 AI 返回非 JSON 时崩溃的问题（降级返回空数组）\n- 修复文档切换时残留自动保存定时器的问题（switchDocument 显式 clearTimeout）\n- 修复编辑器 excludable 属性在新版 TipTap 中不兼容的 TS 类型错误\n- 修复 commentInputBar 未使用导入、EditorView 未使用导入等多个 TypeScript 编译警告\n\n### 🔧 优化\n\n- 浏览器窗口交互优化：修复剪藏失败时错误静默掩盖，双通道兜底更可靠\n- 颜色方案微调，改善浅色/深色模式一致性\n- 自动保存草稿防抖和状态恢复逻辑加固",
-    "pub_date": "2026-07-08T03:33:02Z",
-    "platforms": {
-        "windows-x86_64": {
-            "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkQrek4vTXB2UVVNc1NhUUpLS2tZTTR4cmdBVTZESzdLOEY1aHpKRU5kWVltT211YzJDNUdVdWQ5U0FRQU5taDBZZDFvN0ZZYXlEMTk3UE9KVzlQeGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNDgxNTY5CWZpbGU6QWlQZW5fNC4wLjBfeDY0LXNldHVwLmV4ZQpKU2RweW5UVUxLS1pLSWEzUk1UdzVxUlFleGZHdW5BTVFXdDdLdHJSTUsrS29TZUJZYTdBVU91aERQSDRnVFljMktnMTUwbnlsSy9SSkJxcE4zNTJCZz09Cg==",
-            "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.0.0_x64-setup.exe"
-        }
+  "version": "4.1.0",
+  "notes": "🐛 修复\n- 修复编辑器粘贴换行时光标错移问题：右键粘贴多段落文本时，insertContent 将 \\n 转为 hardBreak 内联节点，导致后续 Enter 拆分段落时光标位置映射偏移\n- 强化 onUpdate 同步保护，增加 syncing 检查，防止幽灵批注清理触发二次 emit 导致 cursor 重置\n- 使用 stableJSON 替换 JSON.stringify 进行内容对比，消除属性排序差异导致的误判\n\n🔧 优化\n- setContent 前保存光标位置并在恢复时尽可能还原，降低文档切换时光标跳动",
+  "pub_date": "2026-07-09T07:45:09Z",
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.1.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkpmbnRuTnZKUVJ5MjQrMGpmaVVTNVBydzJNQUdud2F5aWpUTVpndjhjRTRpSklQMmlrWVlicFhyTStnS3JwRkhwNnpzdC91aHhRTjhlVDBDTHBHcndBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNTgyOTkzCWZpbGU6QWlQZW5fNC4xLjBfeDY0LXNldHVwLmV4ZQpSNGVGVmpzQk1NVFE1OFlET0VXWkdvMGFnOG1NWkpDdnFoQ1ZJVS9Ed2RpVmVONHd3YTgwemNzUkw0cWticzJka3JHVlZCcTl6Y2pmUDdoQll0clpCQT09Cg=="
     }
+  }
 }

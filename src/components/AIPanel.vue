@@ -167,7 +167,7 @@ function priorityClass(priority: string): string {
                 {{ analysisResult.overall_assessment.delta }}
               </span>
             </div>
-            <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">{{ analysisResult.overall_assessment.summary }}</p>
+            <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed text-justify">{{ analysisResult.overall_assessment.summary }}</p>
           </div>
         </div>
 
@@ -179,7 +179,7 @@ function priorityClass(priority: string): string {
             </svg>
             主旨与思想站位
           </div>
-          <div class="space-y-1.5 text-xs text-gray-700 dark:text-gray-300">
+          <div class="space-y-1.5 text-xs text-gray-700 dark:text-gray-300 text-justify">
             <div v-if="analysisResult.ideological_analysis.elevation !== '无明显变化'">
               <span class="text-indigo-600 dark:text-indigo-400 font-medium">主旨提升：</span>{{ analysisResult.ideological_analysis.elevation }}
             </div>
@@ -199,19 +199,19 @@ function priorityClass(priority: string): string {
         </div>
 
         <!-- ── 逻辑分析 ── -->
-        <div v-if="(analysisResult.logic_analysis.strengths?.length || analysisResult.logic_analysis.weaknesses?.length)" class="space-y-2">
+        <div v-if="(analysisResult.logic_analysis.strengths?.length || analysisResult.logic_analysis.weaknesses?.length)" class="bg-cyan-50 dark:bg-cyan-950/20 rounded-lg border border-cyan-300/30 dark:border-cyan-800/20 p-3 space-y-2">
           <div class="flex items-center gap-1.5 text-xs font-semibold text-cyan-700 dark:text-cyan-300">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
             </svg>
             逻辑分析
           </div>
-          <ul v-if="analysisResult.logic_analysis.strengths?.length" class="space-y-1">
+          <ul v-if="analysisResult.logic_analysis.strengths?.length" class="space-y-1 text-justify">
             <li v-for="(item, i) in analysisResult.logic_analysis.strengths" :key="'ls'+i" class="flex items-start gap-1.5 text-xs text-green-800 dark:text-green-200">
               <span class="text-green-600 dark:text-green-400 mt-0.5">✓</span><span>{{ item }}</span>
             </li>
           </ul>
-          <ul v-if="analysisResult.logic_analysis.weaknesses?.length" class="space-y-1">
+          <ul v-if="analysisResult.logic_analysis.weaknesses?.length" class="space-y-1 text-justify">
             <li v-for="(item, i) in analysisResult.logic_analysis.weaknesses" :key="'lw'+i" class="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-200">
               <span class="text-red-600 dark:text-red-400 mt-0.5">✗</span><span>{{ item }}</span>
             </li>
@@ -228,7 +228,7 @@ function priorityClass(priority: string): string {
           </div>
           <div v-if="analysisResult.insight_analysis.added_value?.length" class="space-y-1">
             <div class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">新增洞见</div>
-            <ul class="space-y-0.5">
+            <ul class="space-y-0.5 text-justify">
               <li v-for="(item, i) in analysisResult.insight_analysis.added_value" :key="'av'+i" class="flex items-start gap-1.5 text-xs text-emerald-700 dark:text-emerald-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 flex-shrink-0"></span><span>{{ item }}</span>
               </li>
@@ -236,7 +236,7 @@ function priorityClass(priority: string): string {
           </div>
           <div v-if="analysisResult.insight_analysis.hollow_parts?.length" class="space-y-1">
             <div class="text-[10px] text-orange-600 dark:text-orange-400 font-medium">空话/套话</div>
-            <ul class="space-y-0.5">
+            <ul class="space-y-0.5 text-justify">
               <li v-for="(item, i) in analysisResult.insight_analysis.hollow_parts" :key="'hp'+i" class="flex items-start gap-1.5 text-xs text-orange-700 dark:text-orange-200">
                 <span class="w-1.5 h-1.5 rounded-full bg-orange-400 mt-1.5 flex-shrink-0"></span><span>{{ item }}</span>
               </li>
@@ -252,12 +252,12 @@ function priorityClass(priority: string): string {
             </svg>
             表达分析
           </div>
-          <ul v-if="analysisResult.expression_analysis.highlights?.length" class="space-y-1">
+          <ul v-if="analysisResult.expression_analysis.highlights?.length" class="space-y-1 text-justify">
             <li v-for="(item, i) in analysisResult.expression_analysis.highlights" :key="'eh'+i" class="flex items-start gap-1.5 text-xs text-green-800 dark:text-green-200 bg-green-100 dark:bg-green-950/30 px-2 py-1.5 rounded border border-green-900/20">
               <span class="text-green-600 dark:text-green-400 mt-0.5">✦</span><span>{{ item }}</span>
             </li>
           </ul>
-          <ul v-if="analysisResult.expression_analysis.issues?.length" class="space-y-1">
+          <ul v-if="analysisResult.expression_analysis.issues?.length" class="space-y-1 text-justify">
             <li v-for="(item, i) in analysisResult.expression_analysis.issues" :key="'ei'+i" class="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-200 bg-red-100 dark:bg-red-950/30 px-2 py-1.5 rounded border border-red-300 dark:border-red-900/20">
               <span class="text-red-600 dark:text-red-400 mt-0.5">✦</span><span>{{ item }}</span>
             </li>
@@ -281,9 +281,9 @@ function priorityClass(priority: string): string {
                 >
                   {{ mod.type }}
                 </span>
-                <span class="text-xs text-gray-700 dark:text-gray-300 break-words leading-relaxed">{{ mod.example }}</span>
+                <span class="text-xs text-gray-700 dark:text-gray-300 break-words leading-relaxed text-justify">{{ mod.example }}</span>
               </div>
-              <p class="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed">{{ mod.reason }}</p>
+              <p class="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed text-justify">{{ mod.reason }}</p>
             </div>
           </div>
         </div>
@@ -296,7 +296,7 @@ function priorityClass(priority: string): string {
             </svg>
             维度对比
           </div>
-          <ul class="space-y-1">
+          <ul class="space-y-1 text-justify">
             <li v-for="(item, i) in analysisResult.comparison" :key="'cmp'+i" class="flex items-start gap-1.5 text-xs text-gray-700 dark:text-gray-300 bg-amber-50 dark:bg-amber-950/20 px-2.5 py-1.5 rounded border border-amber-300/30 dark:border-amber-900/20">
               <span class="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 flex-shrink-0"></span><span>{{ item }}</span>
             </li>
@@ -327,8 +327,8 @@ function priorityClass(priority: string): string {
                 </span>
                 <span class="text-[10px] text-gray-400 dark:text-gray-500 truncate flex-1">{{ sug.target }}</span>
               </div>
-              <p class="text-xs text-sky-700 dark:text-sky-200 leading-relaxed">{{ sug.advice }}</p>
-              <p class="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed">{{ sug.rationale }}</p>
+              <p class="text-xs text-sky-700 dark:text-sky-200 leading-relaxed text-justify">{{ sug.advice }}</p>
+              <p class="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed text-justify">{{ sug.rationale }}</p>
             </div>
           </div>
         </div>

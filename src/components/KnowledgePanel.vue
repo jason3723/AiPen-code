@@ -218,64 +218,66 @@ async function handleDelete(kb: KnowledgeBase) {
     </div>
 
     <!-- 新建/编辑弹窗 -->
-    <div
-      v-if="showForm"
-      class="fixed inset-0 z-50 flex items-center justify-center"
-      @click.self="cancelForm"
-    >
-      <div class="absolute inset-0 bg-black/60" />
-      <div class="relative w-full max-w-lg max-h-[85vh] bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl shadow-2xl flex flex-col mx-4">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-          <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
-            {{ editingId ? '编辑知识库' : '确认知识库信息' }}
-          </h3>
-          <button
-            class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded"
-            @click="cancelForm"
-          >✕</button>
-        </div>
-        <div class="px-4 py-3 space-y-3 overflow-y-auto">
-          <div v-if="!editingId" class="text-[10px] text-gray-400 dark:text-gray-500 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-300/40 dark:border-amber-900/30 rounded px-2 py-1.5">
-            文件已解析完成，请确认名称后保存
+    <Teleport to="body">
+      <div
+        v-if="showForm"
+        class="fixed inset-0 z-[200] flex items-center justify-center"
+        @click.self="cancelForm"
+      >
+        <div class="absolute inset-0 bg-black/60" />
+        <div class="relative w-full max-w-lg max-h-[85vh] bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl shadow-2xl flex flex-col mx-4">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              {{ editingId ? '编辑知识库' : '确认知识库信息' }}
+            </h3>
+            <button
+              class="h-6 w-6 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded"
+              @click="cancelForm"
+            >✕</button>
           </div>
-          <div>
-            <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">名称</label>
-            <input
-              v-model="form.name"
-              type="text"
-              class="w-full h-8 px-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none"
-              placeholder="知识库名称"
-            />
+          <div class="px-4 py-3 space-y-3 overflow-y-auto">
+            <div v-if="!editingId" class="text-[10px] text-gray-400 dark:text-gray-500 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-300/40 dark:border-amber-900/30 rounded px-2 py-1.5">
+              文件已解析完成，请确认名称后保存
+            </div>
+            <div>
+              <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">名称</label>
+              <input
+                v-model="form.name"
+                type="text"
+                class="w-full h-8 px-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none"
+                placeholder="知识库名称"
+              />
+            </div>
+            <div>
+              <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">
+                内容
+                <span class="text-gray-500 dark:text-gray-600 ml-1">{{ form.content.length }} 字</span>
+              </label>
+              <textarea
+                v-model="form.content"
+                rows="8"
+                class="w-full px-2 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none resize-none"
+                placeholder="知识库内容..."
+              />
+            </div>
           </div>
-          <div>
-            <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">
-              内容
-              <span class="text-gray-500 dark:text-gray-600 ml-1">{{ form.content.length }} 字</span>
-            </label>
-            <textarea
-              v-model="form.content"
-              rows="8"
-              class="w-full px-2 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 focus:border-blue-500 focus:outline-none resize-none"
-              placeholder="知识库内容..."
-            />
+          <div class="flex gap-2 px-4 py-3 border-t border-gray-200 dark:border-gray-800">
+            <button
+              class="flex-1 h-7 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors"
+              :disabled="saving || !form.name.trim() || !form.content.trim()"
+              @click="handleSave"
+            >
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+            <button
+              class="h-7 px-4 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded transition-colors"
+              @click="cancelForm"
+            >
+              取消
+            </button>
           </div>
-        </div>
-        <div class="flex gap-2 px-4 py-3 border-t border-gray-200 dark:border-gray-800">
-          <button
-            class="flex-1 h-7 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors"
-            :disabled="saving || !form.name.trim() || !form.content.trim()"
-            @click="handleSave"
-          >
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
-          <button
-            class="h-7 px-4 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded transition-colors"
-            @click="cancelForm"
-          >
-            取消
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>

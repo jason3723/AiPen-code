@@ -488,7 +488,7 @@ function formatTime(ts: string) {
         :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
       >
         <div
-          class="max-w-[90%] rounded-lg px-3 py-2 text-xs leading-relaxed"
+          class="max-w-[90%] rounded-lg px-3 py-2 text-xs leading-relaxed text-justify"
           :class="msg.role === 'user'
             ? 'bg-blue-600/30 text-gray-800 dark:text-gray-200'
             : 'bg-gray-100/70 dark:bg-gray-800/60 text-gray-700 dark:text-gray-300'"

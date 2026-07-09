@@ -41,3 +41,85 @@ html, body {
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #4b5563; /* gray-600 */
 }
+
+/* ══════════════════════════════════════════════════════════════
+   打印样式：只打印编辑器文档内容，隐藏所有界面 UI
+   ══════════════════════════════════════════════════════════════ */
+@media print {
+  html, body, #root {
+    overflow: visible !important;
+    background: white !important;
+    color: #1a1a1a !important;
+    height: auto !important;
+  }
+
+  /* 隐藏所有非文档内容的 UI 元素 */
+  header,
+  aside,
+  nav,
+  button,
+  .rich-toolbar,
+  .rich-search-panel,
+  .rich-outline,
+  [data-tauri-drag-region] {
+    display: none !important;
+  }
+
+  /* 编辑器容器全宽 */
+  .h-screen.flex.flex-col {
+    height: auto !important;
+    display: block !important;
+  }
+
+  /* 主内容区全宽显示 */
+  main,
+  [class*="flex-1"] {
+    display: block !important;
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* 编辑器内容区 */
+  .rich-content,
+  .rich-content .ProseMirror {
+    overflow: visible !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* 打印时文字用黑色，背景白色 */
+  * {
+    color: #1a1a1a !important;
+    background-color: transparent !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  /* 链接显示 URL */
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.8em;
+    color: #666 !important;
+  }
+
+  /* 避免内容被截断 */
+  .ProseMirror {
+    page-break-inside: auto;
+  }
+  .ProseMirror h1, .ProseMirror h2, .ProseMirror h3,
+  .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 {
+    page-break-after: avoid;
+  }
+  .ProseMirror table {
+    page-break-inside: avoid;
+  }
+
+  /* 隐藏确认对话框等浮层 */
+  .fixed, .absolute {
+    display: none !important;
+  }
+}

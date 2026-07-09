@@ -210,16 +210,16 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
         <div
           v-for="(block, bi) in changeBlocks"
           :key="bi"
-          class="rounded-md border border-slate-200 dark:border-slate-700/30 overflow-hidden bg-slate-50 dark:bg-slate-800/20"
+          class="rounded-md border border-slate-200 dark:border-slate-700/30 overflow-hidden"
         >
           <!-- 修改块：先删后增 -->
           <template v-if="block.kind === 'modified' && block.deleted && block.inserted">
             <!-- 删除行：翠绿 -->
-            <div class="flex items-stretch text-[13px] leading-relaxed border-b border-emerald-200 dark:border-emerald-500/10 bg-emerald-50 dark:bg-emerald-500/[0.03]">
+            <div class="flex items-stretch text-[13px] leading-relaxed border-b border-emerald-200 dark:border-emerald-500/10">
               <div class="w-6 flex items-start justify-center border-l-2 border-emerald-400 dark:border-emerald-500 py-1.5">
                 <span class="text-emerald-600 dark:text-emerald-400/80 font-medium select-none">-</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-300 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-300 whitespace-pre-wrap break-all text-justify">
                 <template v-if="block.deleted.inline_changes && block.deleted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.deleted.inline_changes"
@@ -234,11 +234,11 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
               </div>
             </div>
             <!-- 新增行：琥珀 -->
-            <div class="flex items-stretch text-[13px] leading-relaxed bg-amber-50 dark:bg-amber-500/[0.03]">
+            <div class="flex items-stretch text-[13px] leading-relaxed">
               <div class="w-6 flex items-start justify-center border-l-2 border-amber-400 dark:border-amber-500 py-1.5">
                 <span class="text-amber-600 dark:text-amber-400/80 font-medium select-none">+</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-800 dark:text-slate-200 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-800 dark:text-slate-200 whitespace-pre-wrap break-all text-justify">
                 <template v-if="block.inserted.inline_changes && block.inserted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.inserted.inline_changes"
@@ -256,11 +256,11 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
 
           <!-- 纯删除块：翠绿 -->
           <template v-else-if="block.kind === 'deleted' && block.deleted">
-            <div class="flex items-stretch text-[13px] leading-relaxed bg-emerald-50 dark:bg-emerald-500/[0.03]">
+            <div class="flex items-stretch text-[13px] leading-relaxed">
               <div class="w-6 flex items-start justify-center border-l-2 border-emerald-400 dark:border-emerald-500 py-1.5">
                 <span class="text-emerald-600 dark:text-emerald-400/80 font-medium select-none">-</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-300 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-700 dark:text-slate-300 whitespace-pre-wrap break-all text-justify">
                 <template v-if="block.deleted.inline_changes && block.deleted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.deleted.inline_changes"
@@ -278,11 +278,11 @@ const changeBlocks = computed<ChangeBlock[]>(() => {
 
           <!-- 纯新增块：琥珀 -->
           <template v-else-if="block.kind === 'inserted' && block.inserted">
-            <div class="flex items-stretch text-[13px] leading-relaxed bg-amber-50 dark:bg-amber-500/[0.03]">
+            <div class="flex items-stretch text-[13px] leading-relaxed">
               <div class="w-6 flex items-start justify-center border-l-2 border-amber-400 dark:border-amber-500 py-1.5">
                 <span class="text-amber-600 dark:text-amber-400/80 font-medium select-none">+</span>
               </div>
-              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-800 dark:text-slate-200 whitespace-pre-wrap break-all">
+              <div class="flex-1 py-1.5 pr-3 font-mono text-gray-800 dark:text-slate-200 whitespace-pre-wrap break-all text-justify">
                 <template v-if="block.inserted.inline_changes && block.inserted.inline_changes.length > 0">
                   <span
                     v-for="(chunk, ci) in block.inserted.inline_changes"
