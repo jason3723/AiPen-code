@@ -854,7 +854,6 @@ function handleStream(
     // 取消上一次回放，等它真正终止后启动新的
     diffPlaybackAbort = true
     diffPlaybackQueue = diffPlaybackQueue.then(async () => {
-      diffPlaybackAbort = false
       await handleDiffPlayback(payload.oldText, payload.newText)
     })
     return
@@ -1004,8 +1003,16 @@ async function handleDiffPlayback(oldText: string, newText: string) {
     } catch { /* 保持当前值 */ }
     await nextTick()
     if (scrollEl) scrollEl.scrollTop = 0
+    workbenchRef.value?.onPlaybackComplete()
+  } else {
+    // 被中断：恢复原文内容避免编辑器处于半改状态
+    try {
+      const oldParsed = JSON.parse(oldText)
+      if (oldParsed && typeof oldParsed === 'object' && oldParsed.type === 'doc') {
+        store.currentContent = oldParsed
+      }
+    } catch { /* 保持当前值 */ }
   }
-  workbenchRef.value?.onPlaybackComplete()
 }
 
 function delay(ms: number): Promise<void> {
@@ -2386,6 +2393,18 @@ async function handleExportWord() {
                 <b class="text-gray-800 dark:text-gray-200">Diff 回放动画</b> — 技能管道执行 / 审查 / 润色完成后，逐操作高亮展示改动的动画效果<br/>
                 <b class="text-gray-800 dark:text-gray-200">侧栏折叠</b> — 左侧文档列表和右侧工具面板分别通过 ◀/▶ 按钮折叠，最大化编辑空间<br/>
                 <b class="text-gray-800 dark:text-gray-200">纯文本提纯优化</b> — 所有 AI 调用（diff、分析、评分、对话、技能）自动从 ProseMirror JSON 提取纯文本，节省 2~3 倍 token 消耗
+              </p>
+            </div>
+            <!-- 18. 编辑器比对 -->
+            <div>
+              <h3 class="font-semibold mb-1.5 text-gray-600 dark:text-gray-400">18. 编辑器比对</h3>
+              <p class="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
+                编辑器右侧与「批注」共用同一个抽屉面板，通过 <b class="text-gray-800 dark:text-gray-200">📝 批注 / 🔍 比对</b> 两个 tab 切换。把任意两段文本放在一起逐字对照，直观看出增、删、改：<br/>
+                • <b class="text-gray-800 dark:text-gray-200">加入比对</b> — 编辑器中选中文字右键 →「↔️ 加入比对」；素材库选中文字右键同样可加入；也可在比对 tab 点「+ 添加比对文本」手动粘贴<br/>
+                • <b class="text-gray-800 dark:text-gray-200">指定原文 / 修改稿</b> — 每条比对卡片点「原文」或「修改稿」按钮，分别设为差异计算的左值 / 右值；新增第 2 条时面板自动展开并计算结果<br/>
+                • <b class="text-gray-800 dark:text-gray-200">差异对比</b> — 删除内容以<span class="line-through text-gray-500 dark:text-gray-400">灰色删除线</span>标记，新增内容以<span class="text-amber-600 dark:text-amber-400">琥珀色</span>高亮标记，未变部分正常显示<br/>
+                • <b class="text-gray-800 dark:text-gray-200">比对历史</b> — 点差异区右上角 ⏱ 时钟图标查看历史会话（按文档留存），可加载查看或点「返回当前」回到当前比对<br/>
+                • <b class="text-gray-800 dark:text-gray-200">清空比对</b> — 底部「🗑 清空此轮比对」将当前条目存档到历史并关闭面板
               </p>
             </div>
           </div>

@@ -158,36 +158,7 @@ watch(chatDataVersion, () => {
   loadMaterialTags();
 });
 
-// ── AI 消息右键菜单 ──
-const msgCtxShow = ref(false);
-const msgCtxX = ref(0);
-const msgCtxY = ref(0);
-const msgCtxContent = ref("");
-
-function onMsgContextMenu(event: MouseEvent, content: string) {
-  event.preventDefault();
-  if (!content) return;
-  msgCtxContent.value = content;
-  msgCtxX.value = event.clientX;
-  msgCtxY.value = event.clientY;
-  msgCtxShow.value = true;
-}
-
-function closeMsgCtx() {
-  msgCtxShow.value = false;
-}
-
-async function copyMsgContent() {
-  try {
-    await navigator.clipboard.writeText(msgCtxContent.value);
-  } catch { /* 忽略 */ }
-  closeMsgCtx();
-}
-
-function importMsgToMaterial() {
-  materialStore.openClipDialog(msgCtxContent.value);
-  closeMsgCtx();
-}
+// ── 知识库 / 素材库 ──
 
 function toggleKb(kbId: string) {
   const idx = selectedKbIds.value.indexOf(kbId);
@@ -374,12 +345,12 @@ function renderMarkdown(text: string) {
     .replace(/>/g, "&gt;")
     .replace(/\*\*(.+?)\*\*/g, "<strong class='font-bold text-gray-900 dark:text-gray-100'>$1</strong>")
     .replace(/### (.+)/g, "<h4 class='text-xs font-bold text-gray-800 dark:text-gray-200 mt-2 mb-1'>$1</h4>")
-    .replace(/## (.+)/g, "<h3 class='text-sm font-bold text-blue-700 dark:text-blue-300 mt-3 mb-1'>$1</h3>")
-    .replace(/# (.+)/g, "<h2 class='text-sm font-bold text-blue-700 dark:text-blue-300 mt-3 mb-2'>$1</h2>")
+    .replace(/## (.+)/g, "<h3 class='text-xs font-bold text-blue-700 dark:text-blue-300 mt-3 mb-1'>$1</h3>")
+    .replace(/# (.+)/g, "<h2 class='text-xs font-bold text-blue-700 dark:text-blue-300 mt-3 mb-2'>$1</h2>")
     .replace(/^\- (.+)/gm, "<li class='ml-3 text-gray-700 dark:text-gray-300 text-xs'>• $1</li>")
     .replace(/^(\d+)\. (.+)/gm, "<li class='ml-3 text-gray-700 dark:text-gray-300 text-xs'>$1. $2</li>")
-    .replace(/`([^`]+)`/g, "<code class='bg-gray-100 dark:bg-gray-800 text-yellow-700 dark:text-yellow-300 px-1 rounded text-[11px]'>$1</code>")
-    .replace(/```(\w+)?\n([\s\S]*?)```/g, "<pre class='bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 p-2 rounded text-[11px] my-1 overflow-x-auto'><code>$2</code></pre>")
+    .replace(/`([^`]+)`/g, "<code class='bg-gray-100 dark:bg-gray-800 text-yellow-700 dark:text-yellow-300 px-1 rounded text-xs'>$1</code>")
+    .replace(/```(\w+)?\n([\s\S]*?)```/g, "<pre class='bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 p-2 rounded text-xs my-1 overflow-x-auto'><code>$2</code></pre>")
     .replace(/\n\n/g, "<br><br>")
     .replace(/\n/g, "<br>");
 }
@@ -475,7 +446,7 @@ function formatTime(ts: string) {
     <!-- 消息区域 -->
     <div
       ref="messagesContainer"
-      class="flex-1 overflow-y-auto space-y-3 mb-3 min-h-0"
+      class="flex-1 overflow-y-auto space-y-3 mb-3 min-h-0 -mr-4 pr-4"
     >
       <div v-if="messages.length === 0 && !loading.send" class="text-center text-gray-500 dark:text-gray-600 text-xs py-8">
         开始对话吧 🗨
@@ -492,14 +463,13 @@ function formatTime(ts: string) {
           :class="msg.role === 'user'
             ? 'bg-blue-600/30 text-gray-800 dark:text-gray-200'
             : 'bg-gray-100/70 dark:bg-gray-800/60 text-gray-700 dark:text-gray-300'"
-          @contextmenu.prevent="msg.role === 'assistant' && onMsgContextMenu($event, msg.content)"
         >
-          <div v-if="msg.context_text" class="text-[10px] text-blue-400/70 mb-1.5 border-l-2 border-blue-600/50 pl-2 italic leading-relaxed max-h-20 overflow-y-auto">
+          <div v-if="msg.context_text" class="text-xs text-gray-700 dark:text-gray-300 mb-1.5 border-l-2 border-gray-400 dark:border-gray-600 pl-2 italic leading-relaxed max-h-20 overflow-y-auto">
             {{ msg.context_text }}
           </div>
           <!-- eslint-disable-next-line vue/no-v-html -->
           <div v-html="renderMarkdown(msg.content)" />
-          <div class="text-[10px] text-gray-500 dark:text-gray-600 mt-1">{{ formatTime(msg.created_at) }}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-600 mt-1">{{ formatTime(msg.created_at) }}</div>
         </div>
       </div>
 
@@ -643,34 +613,5 @@ function formatTime(ts: string) {
       </div>
     </div>
 
-    <!-- AI 消息右键菜单 -->
-    <Teleport to="body">
-      <div
-        v-if="msgCtxShow"
-        class="fixed inset-0 z-[10006]"
-        @click.self="closeMsgCtx"
-        @contextmenu.prevent="closeMsgCtx"
-      >
-        <div
-          class="absolute w-[180px] bg-white/95 dark:bg-gray-900/95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl dark:shadow-2xl py-1 backdrop-blur-md"
-          :style="{ left: msgCtxX + 'px', top: msgCtxY + 'px' }"
-        >
-          <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
-            @click="copyMsgContent"
-          >
-            <span>复制</span>
-            <span class="text-gray-400 dark:text-gray-500 text-[11px]">Ctrl+C</span>
-          </button>
-          <div class="h-px bg-gray-100 dark:bg-gray-700/50 mx-2 my-1" />
-          <button
-            class="w-full px-3 py-1.5 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between"
-            @click="importMsgToMaterial"
-          >
-            <span>📦 导入到素材库</span>
-          </button>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>

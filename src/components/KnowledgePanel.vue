@@ -155,7 +155,7 @@ async function handleDelete(kb: KnowledgeBase) {
     <div v-if="loading.list" class="text-gray-400 dark:text-gray-500 text-xs text-center py-8">加载知识库...</div>
 
     <!-- 知识库列表 -->
-    <div v-else class="flex-1 overflow-y-auto space-y-2">
+    <div v-else class="flex-1 overflow-y-auto space-y-2 -mr-4 pr-4">
       <div
         v-for="kb in knowledgeBases"
         :key="kb.id"

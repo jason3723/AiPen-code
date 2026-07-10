@@ -597,7 +597,7 @@ function renderMarkdown(text: string) {
     <div v-if="loading.list" class="text-gray-400 dark:text-gray-500 text-xs text-center py-8">加载技能列表...</div>
 
     <!-- 技能列表（按分类分组） -->
-    <div v-else class="flex-1 overflow-y-auto space-y-4">
+    <div v-else class="flex-1 overflow-y-auto space-y-4 -mr-4 pr-4">
       <div v-for="(groupSkills, category) in groupedSkills" :key="category">
         <div class="flex items-center gap-2 mb-2">
           <span
@@ -751,7 +751,7 @@ function renderMarkdown(text: string) {
               </button>
               <div
                 v-if="expandedMap[skill.id]"
-                class="px-3 pb-3 text-xs text-gray-700 dark:text-gray-300 leading-relaxed max-h-80 overflow-y-auto"
+                class="px-3 pb-3 text-xs text-gray-700 dark:text-gray-300 leading-relaxed text-justify max-h-80 overflow-y-auto"
               >
                 <div
                   class="prose prose-invert prose-xs max-w-none"

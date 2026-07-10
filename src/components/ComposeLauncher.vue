@@ -422,7 +422,7 @@ const progressHint = computed(() => {
       </div>
 
       <!-- 问题列表（可滚动） -->
-      <div class="flex-1 overflow-y-auto space-y-2 min-h-0">
+      <div class="flex-1 overflow-y-auto space-y-2 min-h-0 -mr-4 pr-4">
         <label class="text-[10px] text-gray-400 dark:text-gray-500 block">采集问题列表</label>
         <div
           v-for="(q, idx) in pendingQuestions"
@@ -517,7 +517,7 @@ const progressHint = computed(() => {
     </div>
 
     <!-- 菜谱列表（按文体分组） -->
-    <div class="flex-1 overflow-y-auto space-y-4">
+    <div class="flex-1 overflow-y-auto space-y-4 -mr-4 pr-4">
       <div v-for="(recipes, genre) in groupedRecipes" :key="genre">
         <!-- 分组标题 -->
         <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">

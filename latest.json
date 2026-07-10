@@ -1,11 +1,11 @@
 {
-  "version": "4.1.0",
-  "notes": "🐛 修复\n- 修复编辑器粘贴换行时光标错移问题：右键粘贴多段落文本时，insertContent 将 \\n 转为 hardBreak 内联节点，导致后续 Enter 拆分段落时光标位置映射偏移\n- 强化 onUpdate 同步保护，增加 syncing 检查，防止幽灵批注清理触发二次 emit 导致 cursor 重置\n- 使用 stableJSON 替换 JSON.stringify 进行内容对比，消除属性排序差异导致的误判\n\n🔧 优化\n- setContent 前保存光标位置并在恢复时尽可能还原，降低文档切换时光标跳动",
-  "pub_date": "2026-07-09T07:45:09Z",
+  "version": "4.2.0",
+  "notes": "🔧 优化\n- 字体下拉列表选项使用自身字体样式渲染，所见即所得\n- 工具栏字体按钮当前字体名使用自身样式展示\n- 修复 Ω 符号图标在工具栏中偏小的问题（SVG viewBox 适配）\n- 修复符号面板 CSS Grid 1fr 列在 absolute 定位中塌缩导致元素挤在一起的问题\n- 符号面板改为向右弹出（left-0），整体更紧凑（30×30 格子），不再遮挡编辑器\n- 字体下拉列表宽度适配长中文字体名\n- Word 导出新增高亮颜色映射，支持 yellow/red/blue 等多色导出\n- Word 导出默认标题加粗关停、默认字号统一为 16pt\n\n🐛 修复\n- diff 比对播放被中断时自动恢复原文内容，避免编辑器停留在半改状态\n\n📝 变更\n- 移除 AI 聊天消息右键菜单（简化交互）\n- 教程新增「编辑器比对」章节",
+  "pub_date": "2026-07-10T06:59:00Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.1.0_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkpmbnRuTnZKUVJ5MjQrMGpmaVVTNVBydzJNQUdud2F5aWpUTVpndjhjRTRpSklQMmlrWVlicFhyTStnS3JwRkhwNnpzdC91aHhRTjhlVDBDTHBHcndBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNTgyOTkzCWZpbGU6QWlQZW5fNC4xLjBfeDY0LXNldHVwLmV4ZQpSNGVGVmpzQk1NVFE1OFlET0VXWkdvMGFnOG1NWkpDdnFoQ1ZJVS9Ed2RpVmVONHd3YTgwemNzUkw0cWticzJka3JHVlZCcTl6Y2pmUDdoQll0clpCQT09Cg=="
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkdpSWljSnZiVllyVE1jb3FvdXBJNW90cUtaRzEva2dRMUh1YkxDNmdVRVVOWG8rRUo3ajZlWVN6eUlTa1J6anRDaWhGdzh2eGxpUDZ5YzJxS05WcndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNjY2NzQ4CWZpbGU6QWlQZW5fNC4yLjBfeDY0LXNldHVwLmV4ZQpSYkw2OFdmbGdtMFpYdmdHc1ozMlVlY0VEWlpWR2NuYm5oYUlaSHNyZjZiZ2VpRG9FZzBzRVRiMCtJNUlQZkQvQnlZNFRqa2RSYm82Y3U3T2lDdldCZz09Cg=="
     }
   }
 }

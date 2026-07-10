@@ -73,9 +73,9 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   sizeH3: 16,
   sizeH4: 16,
   sizeBody: 16,
-  boldH1: true,
-  boldH2: true,
-  boldH3: true,
+  boldH1: false,
+  boldH2: false,
+  boldH3: false,
   boldH4: true,
   boldBody: false,
   marginTop: 37,
@@ -152,12 +152,63 @@ function parseContent(raw: string): ParsedDoc {
     : empty;
 }
 
+// ── 高亮颜色映射：编辑器颜色 → Word 高亮名称 ──────────
+function mapHighlightColor(color: string | undefined | null): string | undefined {
+  if (!color) return undefined;
+  // 提取 hex 分量（兼容 #rgb / rgba() 格式）
+  let r = 255, g = 192, b = 120;
+  const rgba = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgba) {
+    r = parseInt(rgba[1]); g = parseInt(rgba[2]); b = parseInt(rgba[3]);
+  } else {
+    const hex = color.replace('#', '');
+    if (hex.length >= 6) {
+      r = parseInt(hex.substring(0, 2), 16);
+      g = parseInt(hex.substring(2, 4), 16);
+      b = parseInt(hex.substring(4, 6), 16);
+    }
+  }
+  // 仅匹配完全一致的标准 Word 高亮色
+  const key = `${r},${g},${b}`;
+  const wordMap: Record<string, string> = {
+    '255,192,120': 'yellow',       // TipTap 默认高亮色
+    '255,255,0': 'yellow',         // #FFFF00
+    '0,255,0': 'brightGreen',      // #00FF00
+    '0,255,255': 'cyan',           // #00FFFF
+    '255,0,255': 'magenta',        // #FF00FF
+    '0,0,255': 'blue',             // #0000FF
+    '255,0,0': 'red',              // #FF0000
+    '0,0,139': 'darkBlue',         // #00008B
+    '0,139,139': 'darkCyan',       // #008B8B
+    '0,100,0': 'darkGreen',        // #006400
+    '139,0,139': 'darkMagenta',    // #8B008B
+    '139,0,0': 'darkRed',          // #8B0000
+    '128,128,0': 'darkYellow',     // #808000
+    '169,169,169': 'darkGray',     // #A9A9A9
+    '211,211,211': 'lightGray',    // #D3D3D3
+    '0,0,0': 'black',              // #000000
+    '0,128,0': 'green',            // #008000
+  };
+  // 精确匹配不到的，找最相近的 Word 标准色
+  if (wordMap[key]) return wordMap[key];
+  let best = 'yellow';
+  let bestDist = Infinity;
+  for (const [k, name] of Object.entries(wordMap)) {
+    const [kr, kg, kb] = k.split(',').map(Number);
+    const dist = (r - kr) ** 2 + (g - kg) ** 2 + (b - kb) ** 2;
+    if (dist < bestDist) { bestDist = dist; best = name; }
+  }
+  return best;
+}
+
 // ── 内联文本解析（应用 marks → TextRun） ─────────────────
 function buildTextRuns(
   node: PMNode,
   settings: ExportSettings,
   defaultFont: string,
   defaultSize: number,
+  /** 由调用方（如 heading 节点）强制覆盖 bold，不依赖 mark */
+  forceBold?: boolean,
 ): TextRun[] {
   // 文本节点
   if (node.type === 'text') {
@@ -173,6 +224,8 @@ function buildTextRuns(
 
     let superscript = false;
     let subscript = false;
+    let highlightColor: string | undefined;
+    let hasHighlight = false;
 
     // 同一文本节点可能挂多个 comment mark（极少见），用 order 去重收集
     const commentOrderToAdd: number[] = [];
@@ -193,7 +246,10 @@ function buildTextRuns(
             if (m.attrs?.fontSize) fontSize = parseFontSize(m.attrs.fontSize);
             if (m.attrs?.fontFamily) fontFamily = m.attrs.fontFamily;
             break;
-          case 'highlight': break; // Word 不支持高亮，忽略
+          case 'highlight':
+            hasHighlight = true;
+            highlightColor = m.attrs?.color;
+            break;
           case 'comment': {
             if (settings.includeComments === false) break;
             const id = m.attrs?.commentId;
@@ -212,13 +268,16 @@ function buildTextRuns(
       text: node.text || '',
       font: code ? 'Consolas' : (fontFamily || defaultFont),
       size: ptToHalfPt(fontSize || defaultSize),
-      bold,
+      bold: forceBold ?? bold,
       italics: italic,
       underline: underline ? { type: 'single' } : undefined,
       strike,
       color: color || undefined,
       superScript: superscript || undefined,
       subScript: subscript || undefined,
+      // 只有当 highlight mark 真的存在时才输出 highlight 字段
+      // (编辑器无参 toggleHighlight() 时 color 为 null，对应 <mark> 默认黄色)
+      highlight: hasHighlight ? (mapHighlightColor(highlightColor) ?? 'yellow') as any : undefined,
       ...(href ? { style: 'Hyperlink' } : {}), // 简化：Word 链接需要单独处理
     }));
     // 角标：每个 comment order 一个 sup
@@ -457,12 +516,15 @@ async function appendNode(
       const sizeMap: Record<number, number> = {
         1: settings.sizeH1, 2: settings.sizeH2, 3: settings.sizeH3, 4: settings.sizeH4,
       };
+      const headingBoldMap: Record<number, boolean> = {
+        1: settings.boldH1, 2: settings.boldH2, 3: settings.boldH3, 4: settings.boldH4,
+      };
 
       const font = fontMap[level] || settings.fontBody;
       const size = sizeMap[level] || settings.sizeBody;
       const textRuns = node.content
-        ? node.content.flatMap(c => buildTextRuns(c, settings, font, size))
-        : [new TextRun({ text: '', font, size: ptToHalfPt(size) })];
+        ? node.content.flatMap(c => buildTextRuns(c, settings, font, size, headingBoldMap[level]))
+        : [new TextRun({ text: '', font, size: ptToHalfPt(size), bold: headingBoldMap[level] })];
 
       // 逐段对齐：JSON textAlign 优先，否则标题默认（H1居中，其余两端对齐）
       const alignment = attrs.textAlign
@@ -479,14 +541,6 @@ async function appendNode(
         spacing: headingSpacing,
         indent: { firstLine: headingIndent ?? 0 },
       }));
-      break;
-    }
-
-    case 'bulletList':
-    case 'orderedList': {
-      for (const item of buildListParagraphs(node, node.type as 'bulletList' | 'orderedList', settings, bodySpacing)) {
-        children.push(item);
-      }
       break;
     }
 
@@ -531,51 +585,6 @@ async function appendNode(
         }
       }
   }
-}
-
-/** 将 ProseMirror list 节点展开为带标记的 Paragraph 数组 */
-function buildListParagraphs(
-  node: PMNode,
-  listType: 'bulletList' | 'orderedList',
-  settings: ExportSettings,
-  bodySpacing: ISpacingProperties,
-): Paragraph[] {
-  const result: Paragraph[] = [];
-  let counter = 1;
-
-  for (const item of node.content || []) {
-    if (item.type !== 'listItem') continue;
-    for (const sub of item.content || []) {
-      if (sub.type === 'paragraph') {
-        const textRuns = sub.content
-          ? sub.content.flatMap(c => buildTextRuns(c, settings, settings.fontBody, settings.sizeBody))
-          : [];
-        const marker = listType === 'bulletList'
-          ? '• '
-          : `${counter++}. `;
-        const markerRun = new TextRun({
-          text: marker,
-          font: settings.fontBody,
-          size: ptToHalfPt(settings.sizeBody),
-        });
-        result.push(new Paragraph({
-          children: [markerRun, ...textRuns],
-          alignment: AlignmentType.JUSTIFIED,
-          spacing: bodySpacing,
-          indent: { firstLine: 0, left: 360 },
-        }));
-      } else if (sub.type === 'bulletList' || sub.type === 'orderedList') {
-        result.push(...buildListParagraphs(
-          sub,
-          sub.type as 'bulletList' | 'orderedList',
-          settings,
-          bodySpacing,
-        ));
-      }
-    }
-  }
-
-  return result;
 }
 
 async function buildTable(

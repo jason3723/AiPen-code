@@ -660,12 +660,16 @@ const SearchHighlightExt = Extension.create({
 
 // ── 查找替换 ──
 /** 通用防抖，用于搜索等高频触发操作 */
-function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T & { cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null
-  return ((...args: any[]) => {
+  const debounced = ((...args: any[]) => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => { timer = null; fn(...args) }, ms)
-  }) as T
+  }) as T & { cancel: () => void }
+  debounced.cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null }
+  }
+  return debounced
 }
 const searchOpen = ref(false)
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -675,6 +679,7 @@ const searchCount = ref(0)
 const searchIdx = ref(0)
 const caseSensitive = ref(false)
 const debouncedSearch = debounce(() => doSearch(), 200)
+// 查找匹配结果（<script setup> 作用域内，每个组件实例独立，不存在多实例共享问题）
 let _searchMatches: { from: number; to: number }[] = []
 
 function applySearchDecorations() {
@@ -936,11 +941,16 @@ function execCtxMenuInsertToChat() {
   closeCtxMenu()
 }
 function execCtxMenuDeleteMaterial() {
-  emit('delete-material', ctxMenuSelFrom.value)
+  // 使用当前编辑器选区位置，避免使用可能已失效的缓存位置
+  const ed = editor.value
+  const pos = ed ? ed.state.selection.from : ctxMenuSelFrom.value
+  emit('delete-material', pos)
   closeCtxMenu()
 }
 function execCtxMenuRemoveFromTag() {
-  emit('remove-from-tag', ctxMenuSelFrom.value)
+  const ed = editor.value
+  const pos = ed ? ed.state.selection.from : ctxMenuSelFrom.value
+  emit('remove-from-tag', pos)
   closeCtxMenu()
 }
 
@@ -1011,6 +1021,7 @@ function closeAllPickers() {
   fontDropdownOpen.value = false
   fontSizeDropdownOpen.value = false
   colorPickerOpen.value = false
+  symbolPanelOpen.value = false
 }
 function toggleHeadingDropdown() { closeAllPickers(); headingDropdownOpen.value = !headingDropdownOpen.value }
 function toggleFontDropdown() { closeAllPickers(); fontDropdownOpen.value = !fontDropdownOpen.value }
@@ -1137,11 +1148,14 @@ async function applyContent(content: any) {
 
 // ── 创建 TipTap 编辑器 ──
 const editor = useEditor({
-  content: '',
+  content: props.modelValue || '',
   editable: !props.readonly,
   extensions: [
     StarterKit.configure({
       heading: { levels: [1, 2, 3, 4] },
+      bulletList: false,
+      orderedList: false,
+      listItem: false,
       link: { openOnClick: false, HTMLAttributes: { class: 'text-blue-500 dark:text-blue-400 underline' } },
     }),
     Highlight.configure({ multicolor: true }),
@@ -1166,7 +1180,7 @@ const editor = useEditor({
     CommentBadgeExt,
   ],
   onCreate() {
-    // 编辑器已创建，异步注入初始内容（含图片 data URL 恢复）
+    // 编辑已创建，异步恢复图片 data URL（初始内容已通过 content 选项注入）
     applyContent(props.modelValue).then(() => {
       initialized = true
     })
@@ -1268,6 +1282,12 @@ const editor = useEditor({
           }
           return true
         }
+        if ((ke.ctrlKey || ke.metaKey) && (ke.key === 'g' || ke.key === 'G')) {
+          ke.preventDefault()
+          ke.stopPropagation()
+          editor.value?.commands.toggleHighlight()
+          return true
+        }
         if ((ke.ctrlKey || ke.metaKey) && (ke.key === 'h' || ke.key === 'H')) {
           ke.preventDefault()
           if (!searchOpen.value) searchOpen.value = true
@@ -1276,6 +1296,50 @@ const editor = useEditor({
             const replaceInput = document.querySelector('.rich-search-input[placeholder="替换为..."]') as HTMLInputElement | null
             replaceInput?.focus()
           }, 50)
+          return true
+        }
+        // Ctrl+1~4 → 标题 H1~H4
+        if ((ke.ctrlKey || ke.metaKey) && !ke.shiftKey && ['1', '2', '3', '4'].includes(ke.key)) {
+          ke.preventDefault()
+          ke.stopPropagation()
+          const level = parseInt(ke.key) as 1 | 2 | 3 | 4
+          execHeading(level)
+          return true
+        }
+        // Ctrl+. / Ctrl+Shift+. → 上标
+        if ((ke.ctrlKey || ke.metaKey) && ke.code === 'Period') {
+          ke.preventDefault()
+          ke.stopPropagation()
+          const ed = editor.value
+          if (!ed) return true
+          ed.chain().focus().toggleSuperscript().run()
+          return true
+        }
+        // Ctrl+, / Ctrl+Shift+, → 下标
+        if ((ke.ctrlKey || ke.metaKey) && ke.code === 'Comma') {
+          ke.preventDefault()
+          ke.stopPropagation()
+          const ed = editor.value
+          if (!ed) return true
+          ed.chain().focus().toggleSubscript().run()
+          return true
+        }
+        // Ctrl+Shift+X → 删除线
+        if ((ke.ctrlKey || ke.metaKey) && ke.shiftKey && (ke.key === 'x' || ke.key === 'X')) {
+          ke.preventDefault()
+          ke.stopPropagation()
+          execStrike()
+          return true
+        }
+        // Tab / Shift+Tab → 缩进 / 减少缩进（不在表格内时）
+        if (ke.key === 'Tab') {
+          const ed = editor.value
+          if (!ed) return false
+          // 表格内由 TipTap Table 处理 Tab 导航，不拦截
+          if (ed.isActive('table')) return false
+          ke.preventDefault()
+          if (ke.shiftKey) execOutdent()
+          else execIndent()
           return true
         }
         if (ke.key === 'Backspace') {
@@ -1315,7 +1379,6 @@ const editor = useEditor({
         // 根据菜单内容估算尺寸
         const isDoc = !props.editMode || props.editMode === 'document'
         const hasText = !!selText
-        // 含新增「🔍 加入比对」一项（各 +28px）
         let menuH = isDoc ? (hasText ? 246 : 105) : (hasText ? 228 : 70)
         const { x, y } = editorSmartMenuPos(event.clientX, event.clientY, 200, menuH)
         ctxMenuX.value = x
@@ -1436,6 +1499,8 @@ watch(
   () => props.highlightQuery,
   async (q) => {
     if (!q || !editor.value) return;
+    // 查找面板打开时不覆盖搜索面板的匹配结果
+    if (searchOpen.value) return;
     // 等待组件 DOM 更新（modelValue prop 已到达组件）
     await nextTick();
     // 等待内容同步完成（modelValue watch 可能正在 async 加载并 setContent）
@@ -1483,7 +1548,7 @@ function onCommentJumpFromTooltip(e: Event) {
   const detail = (e as CustomEvent<{ commentId: string }>).detail
   if (detail?.commentId) onCommentListJump(detail.commentId)
 }
-/** 全局拦截 Ctrl+F，防止浏览器原生查找栏弹出（连点两次时焦点可能在搜索输入框而非编辑器） */
+/** 全局拦截 Ctrl+F / Ctrl+G，防止浏览器原生查找栏弹出（连点两次时焦点可能在搜索输入框而非编辑器） */
 function onGlobalKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault()
@@ -1493,6 +1558,31 @@ function onGlobalKeydown(e: KeyboardEvent) {
     } else {
       searchInputRef.value?.focus()
     }
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
+    e.preventDefault()
+    execHighlight()
+  }
+  // Ctrl+1~4 → 标题 + 拦截浏览器切标签页
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && ['1', '2', '3', '4'].includes(e.key)) {
+    e.preventDefault()
+    const level = parseInt(e.key) as 1 | 2 | 3 | 4
+    execHeading(level)
+  }
+  // Ctrl+. / Ctrl+Shift+. → 上标
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Period') {
+    e.preventDefault()
+    execSuperscript()
+  }
+  // Ctrl+, / Ctrl+Shift+, → 下标
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Comma') {
+    e.preventDefault()
+    execSubscript()
+  }
+  // Ctrl+Shift+X → 删除线
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
+    e.preventDefault()
+    execStrike()
   }
 }
 onMounted(() => {
@@ -1511,7 +1601,17 @@ function execBold() { focus(); editor.value?.chain().toggleBold().run() }
 function execItalic() { focus(); editor.value?.chain().toggleItalic().run() }
 function execUnderline() { focus(); editor.value?.chain().toggleUnderline().run() }
 function execStrike() { focus(); editor.value?.chain().toggleStrike().run() }
-function execHighlight() { focus(); editor.value?.chain().toggleHighlight().run() }
+function execHighlight() { focus(); editor.value?.chain().toggleHighlight({ color: '#FFFF00' }).run() }
+
+// ── 符号面板 ──
+const symbolPanelOpen = ref(false)
+const SYMBOLS = ['．', '〔', '〕', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳']
+
+function toggleSymbolPanel() { closeAllPickers(); symbolPanelOpen.value = !symbolPanelOpen.value }
+function insertSymbol(ch: string) {
+  focus(); editor.value?.chain().insertContent(ch).run()
+  symbolPanelOpen.value = false
+}
 
 // ── 批注输入浮层状态 ──
 const commentBarVisible = ref(false)
@@ -1617,7 +1717,27 @@ function showToolbarHint(msg: string) {
 }
 function execSuperscript() { focus(); editor.value?.chain().toggleSuperscript().run() }
 function execSubscript() { focus(); editor.value?.chain().toggleSubscript().run() }
-function execClearFormat() { focus(); editor.value?.chain().clearNodes().unsetAllMarks().run() }
+function execClearFormat() {
+  focus()
+  const ed = editor.value
+  if (!ed) return
+
+  // 保存段落级排版属性（缩进、对齐、行高等，清除格式时不应丢失）
+  const { $from } = ed.state.selection
+  const p = $from.parent
+  const keepAttrs: Record<string, any> = {}
+  if (p.attrs?.textIndent) keepAttrs.textIndent = p.attrs.textIndent
+  if (p.attrs?.textAlign) keepAttrs.textAlign = p.attrs.textAlign
+  if (p.attrs?.lineHeight) keepAttrs.lineHeight = p.attrs.lineHeight
+
+  // 清除节点样式 + 内联标记 + 字体 → 回归默认三号方正仿宋简体
+  ed.chain().focus().clearNodes().unsetAllMarks().unsetFontSize().unsetFontFamily().run()
+
+  // 恢复被 clearNodes() 误删的段落排版属性
+  if (Object.keys(keepAttrs).length > 0) {
+    ed.chain().focus().updateAttributes('paragraph', keepAttrs).run()
+  }
+}
 
 /** 每次缩进步进 = 2 个字符宽度（em） */
 const INDENT_STEP = 2
@@ -1648,7 +1768,20 @@ function execHeading(level: number) {
   const ed = editor.value
   if (!ed) { headingDropdownOpen.value = false; return }
 
-  // 加粗映射（仅 bold 是语义标记，字号/字体由 CSS v-bind 控制）
+  const { from, to, empty } = ed.state.selection
+  const $from = ed.state.doc.resolve(from)
+  const $to = ed.state.doc.resolve(to)
+
+  // Word 风格：判断是"整段操作"还是"选中部分文字"
+  // 整段 = 光标无选区 + 同一段落内选中覆盖了全部文字内容
+  const sameBlock = $from.parent.eq($to.parent)
+  const blockStart = $from.start(1)   // 段落起始位（含 opening token）
+  const blockEnd = $from.end(1)       // 段落结束位（含 closing token）
+  const isWholeBlock = empty || (sameBlock && from <= blockStart + 1 && to >= blockEnd - 1)
+
+  // 标题样式参数
+  const fontMap: Record<number, string> = { 1: es().fontH1, 2: es().fontH2, 3: es().fontH3, 4: es().fontH4 }
+  const sizeMap: Record<number, number> = { 1: es().sizeH1, 2: es().sizeH2, 3: es().sizeH3, 4: es().sizeH4 }
   const boldMap: Record<number, boolean> = { 1: es().boldH1, 2: es().boldH2, 3: es().boldH3, 4: es().boldH4 }
 
   if (level === 0) {
@@ -1657,19 +1790,38 @@ function execHeading(level: number) {
     ed.chain().focus().unsetFontSize().unsetFontFamily().run()
     if (es().boldBody) ed.chain().focus().setBold().run()
     else ed.chain().focus().unsetBold().run()
-  } else {
+  } else if (isWholeBlock) {
+    // ——— Word 行为2：整段标题转换 ———
     const wasActive = ed.isActive('heading', { level })
     ed.chain().toggleHeading({ level: level as 1 | 2 | 3 | 4 }).run()
+    // 清除行内字体标记（CSS 通过 h1-h4 规则控制视觉，含加粗）
+    ed.chain().focus().unsetFontSize().unsetFontFamily().run()
+    // 如果是从标题切回正文，确保正文加粗状态正确
+    if (wasActive && es().boldBody) ed.chain().focus().setBold().run()
+    else if (wasActive) ed.chain().focus().unsetBold().run()
+  } else {
+    // ——— Word 行为1：选中部分文字 → 只改字体/字号/加粗，段落不变 ———
+    const font = fontMap[level]
+    const size = sizeMap[level]
 
-    if (!wasActive) {
-      // 切进标题：清除已有的行内字号/字体标记，让 CSS 通过 h1-h4 规则控制视觉
-      ed.chain().focus().unsetFontSize().unsetFontFamily().run()
-      if (boldMap[level]) ed.chain().focus().setBold().run()
-      else ed.chain().focus().unsetBold().run()
-    } else {
-      // 切回正文：同样清除行内标记，让 CSS 正文规则接管
+    // 检查选中文字是否已有该标题的字体样式 → 做 toggle
+    const marks = ed.state.selection.$from.marks()
+    const hasThisHeadingStyle = marks.some(m => {
+      if (m.type.name === 'textStyle') {
+        return m.attrs.fontFamily === font
+          && Math.abs((m.attrs.fontSize || 0) - size) < 0.1
+      }
+      return false
+    })
+
+    if (hasThisHeadingStyle) {
+      // 已应用 → 恢复正文默认字体/字号
       ed.chain().focus().unsetFontSize().unsetFontFamily().run()
       if (es().boldBody) ed.chain().focus().setBold().run()
+      else ed.chain().focus().unsetBold().run()
+    } else {
+      ed.chain().focus().setFontFamily(font).setFontSize(size + 'pt').run()
+      if (boldMap[level]) ed.chain().focus().setBold().run()
       else ed.chain().focus().unsetBold().run()
     }
   }
@@ -1679,8 +1831,6 @@ function execHeading(level: number) {
 function execAlign(dir: 'left' | 'center' | 'right' | 'justify') {
   focus(); editor.value?.chain().setTextAlign(dir).run()
 }
-function execBullet() { focus(); editor.value?.chain().toggleBulletList().run() }
-function execOrdered() { focus(); editor.value?.chain().toggleOrderedList().run() }
 function execHr() { focus(); editor.value?.chain().setHorizontalRule().run() }
 function execUndo() { focus(); editor.value?.chain().undo().run() }
 function execRedo() { focus(); editor.value?.chain().redo().run() }
@@ -1768,8 +1918,6 @@ const active = computed(() => ({
   comment: editor.value?.isActive('comment') ?? false,
   superscript: editor.value?.isActive('superscript') ?? false,
   subscript: editor.value?.isActive('subscript') ?? false,
-  bullet: editor.value?.isActive('bulletList') ?? false,
-  ordered: editor.value?.isActive('orderedList') ?? false,
   alignLeft: editor.value?.isActive({ textAlign: 'left' }) ?? false,
   alignCenter: editor.value?.isActive({ textAlign: 'center' }) ?? false,
   alignRight: editor.value?.isActive({ textAlign: 'right' }) ?? false,
@@ -1885,13 +2033,15 @@ const svg = {
   italic: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>`,
   underline: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>`,
   strike: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 11.5H6.5"/><path d="M15 6.5a4 4 0 0 0-4-4c-2.5 0-4.5 2-4.5 4.5 0 1.7.8 3.2 2.1 4"/><path d="M9 17.5a4 4 0 0 0 4 4c2.5 0 4.5-2 4.5-4.5 0-1.7-.8-3.2-2.1-4"/></svg>`,
-  highlighter: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2 2-1.4 1.4-2 5.2 5.2a2 2 0 0 1 0 2.8L22 12z"/></svg>`,
+  // 倾斜荧光笔：笔尖向下，笔身填半透明黄，笔帽分节
+  highlighter: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4l6 6-9 9H5v-6z" fill="#fde047" fill-opacity="0.55"/><line x1="14" y1="4" x2="20" y2="10"/><line x1="17" y1="7" x2="21" y2="3"/></svg>`,
+  // "A" 字 + 下方彩色色带：Word/Google Docs 通用"字体颜色"约定
+  // A 顶点 (12,5) 居中，底脚对称在 x=3 / x=21，色带居中于 x=12
+  textColor: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20 L11 5 H13 L21 20"/><line x1="6" y1="15" x2="18" y2="15"/><line x1="5" y1="22" x2="19" y2="22" stroke="#ef4444" stroke-width="2"/></svg>`,
   alignLeft: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="17" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>`,
   alignCenter: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="18" y1="14" x2="6" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>`,
   alignRight: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="7" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>`,
   alignJustify: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>`,
-  bulletList: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
-  orderedList: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>`,
   hr: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
   table: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>`,
   image: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
@@ -1902,8 +2052,8 @@ const svg = {
   close: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
   superscript: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l8-8"/><path d="M12 19l-8-8"/><path d="M20 12h-4c1-2 2-3 2-4 0-1-.8-2-2-2s-2 1-2 2"/></svg>`,
   subscript: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l8-8"/><path d="M12 19l-8-8"/><path d="M20 20h-4c1-2 2-3 2-4 0-1-.8-2-2-2s-2 1-2 2"/></svg>`,
-  textColor: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9.6 3.3h4.8L20 21h-2.8l-1.2-3.6H8l-1.2 3.6H4L9.6 3.3zm-1 11.7h6.8L12 5.7l-1.4 4.5z"/></svg>`,
-  clearFormat: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7l-4-4 4-4h13"/><path d="M6.5 13.5l4-8"/><path d="M10 6h2"/><path d="M14 10v8"/></svg>`,
+  // 橡皮擦：斜长方体 + 底部接触面 + 擦痕
+  clearFormat: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 21h20"/><path d="m7 20-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 20"/></svg>`,
   comment: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/></svg>`,
   indent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="7 10 9 12 7 14"/></svg>`,
   outdent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="17 10 15 12 17 14"/></svg>`,
@@ -1919,6 +2069,8 @@ const svg = {
   splitCell: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="8" height="16" rx="1"/><rect x="13" y="4" width="8" height="16" rx="1"/><line x1="11" y1="8" x2="13" y2="8"/><line x1="11" y1="12" x2="13" y2="12"/><line x1="11" y1="16" x2="13" y2="16"/></svg>`,
   toggleHeader: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/><rect x="5" y="5" width="2" height="2" fill="currentColor" stroke="none"/></svg>`,
   printer: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 12H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`,
+  // Ω 符号图标：用 text 居中渲染，字号与 14×14 图标视觉重量一致
+  symbol: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" stroke="none" style="font-family: 'Times New Roman', serif; line-height: 1"><text x="7" y="11" text-anchor="middle" font-size="14" font-weight="600" dominant-baseline="alphabetic">Ω</text></svg>`,
   outline: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
   fullscreen: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`,
   minus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
@@ -1950,16 +2102,16 @@ function btnClass(active: boolean) {
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
       <!-- ── 基础文字格式 ── -->
-      <button title="粗体" :class="btnClass(active.bold)" @mousedown.prevent="execBold" v-html="svg.bold" />
-      <button title="斜体" :class="btnClass(active.italic)" @mousedown.prevent="execItalic" v-html="svg.italic" />
-      <button title="下划线" :class="btnClass(active.underline)" @mousedown.prevent="execUnderline" v-html="svg.underline" />
-      <button title="删除线" :class="btnClass(active.strike)" @mousedown.prevent="execStrike" v-html="svg.strike" />
+      <button title="粗体 Ctrl+B" :class="btnClass(active.bold)" @mousedown.prevent="execBold" v-html="svg.bold" />
+      <button title="斜体 Ctrl+I" :class="btnClass(active.italic)" @mousedown.prevent="execItalic" v-html="svg.italic" />
+      <button title="下划线 Ctrl+U" :class="btnClass(active.underline)" @mousedown.prevent="execUnderline" v-html="svg.underline" />
+      <button title="删除线 Ctrl+Shift+X" :class="btnClass(active.strike)" @mousedown.prevent="execStrike" v-html="svg.strike" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
       <!-- ── 高级文字样式 ── -->
-      <button title="上标" :class="btnClass(active.superscript)" @mousedown.prevent="execSuperscript" v-html="svg.superscript" />
-      <button title="下标" :class="btnClass(active.subscript)" @mousedown.prevent="execSubscript" v-html="svg.subscript" />
+      <button title="上标 Ctrl+. / Ctrl+Shift+." :class="btnClass(active.superscript)" @mousedown.prevent="execSuperscript" v-html="svg.superscript" />
+      <button title="下标 Ctrl+, / Ctrl+Shift+," :class="btnClass(active.subscript)" @mousedown.prevent="execSubscript" v-html="svg.subscript" />
 
       <div class="relative">
         <button
@@ -1995,7 +2147,7 @@ function btnClass(active: boolean) {
         <div v-if="colorPickerOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
       </div>
 
-      <button title="高亮" :class="btnClass(active.highlight)" @mousedown.prevent="execHighlight" v-html="svg.highlighter" />
+      <button title="高亮 Ctrl+G" :class="btnClass(active.highlight)" @mousedown.prevent="execHighlight" v-html="svg.highlighter" />
       <button v-if="editMode !== 'material'" title="插入批注" :class="btnClass(active.comment)" @mousedown.prevent="execComment" v-html="svg.comment" />
       <button title="清除格式" class="rich-btn" @mousedown.prevent="execClearFormat" v-html="svg.clearFormat" />
 
@@ -2004,6 +2156,7 @@ function btnClass(active: boolean) {
       <!-- ── 段落样式 ── -->
       <div class="relative">
         <button
+          title="段落样式 Ctrl+1~4"
           class="rich-btn min-w-[64px] flex items-center gap-0.5"
           @mousedown.prevent="toggleHeadingDropdown"
         >
@@ -2022,19 +2175,19 @@ function btnClass(active: boolean) {
           </div>
           <div class="rich-dropdown-item" :class="{ 'rich-dropdown-active': active.heading1 }" @mousedown.prevent="execHeading(1)">
             <span class="leading-none" :style="previewH1Style">标题 1</span>
-            <span class="text-[10px] opacity-50 shrink-0">{{ h1FontSizePt }}pt</span>
+            <span class="text-[10px] opacity-50 shrink-0">Ctrl+1 / {{ h1FontSizePt }}pt</span>
           </div>
           <div class="rich-dropdown-item" :class="{ 'rich-dropdown-active': active.heading2 }" @mousedown.prevent="execHeading(2)">
             <span class="leading-none" :style="previewH2Style">标题 2</span>
-            <span class="text-[10px] opacity-50 shrink-0">{{ h2FontSizePt }}pt</span>
+            <span class="text-[10px] opacity-50 shrink-0">Ctrl+2 / {{ h2FontSizePt }}pt</span>
           </div>
           <div class="rich-dropdown-item" :class="{ 'rich-dropdown-active': active.heading3 }" @mousedown.prevent="execHeading(3)">
             <span class="leading-none" :style="previewH3Style">标题 3</span>
-            <span class="text-[10px] opacity-50 shrink-0">{{ h3FontSizePt }}pt</span>
+            <span class="text-[10px] opacity-50 shrink-0">Ctrl+3 / {{ h3FontSizePt }}pt</span>
           </div>
           <div class="rich-dropdown-item" :class="{ 'rich-dropdown-active': active.heading4 }" @mousedown.prevent="execHeading(4)">
             <span class="leading-none" :style="previewH4Style">标题 4</span>
-            <span class="text-[10px] opacity-50 shrink-0">{{ h4FontSizePt }}pt</span>
+            <span class="text-[10px] opacity-50 shrink-0">Ctrl+4 / {{ h4FontSizePt }}pt</span>
           </div>
         </div>
         <div v-if="headingDropdownOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
@@ -2046,20 +2199,21 @@ function btnClass(active: boolean) {
           class="rich-btn min-w-[100px] flex items-center gap-0.5 text-[11px]"
           @mousedown.prevent="toggleFontDropdown"
         >
-          <span class="whitespace-nowrap">{{ fontFamily }}</span>
+          <span class="whitespace-nowrap" :style="{ fontFamily: fontFamily }">{{ fontFamily }}</span>
           <span v-html="svg.chevronDown" class="flex items-center shrink-0" :class="{ 'rotate-180': fontDropdownOpen }" />
         </button>
         <div
           v-if="fontDropdownOpen"
-          class="rich-dropdown absolute top-full left-0 mt-1 w-36 py-1 z-50 max-h-48 overflow-y-auto"
+          class="rich-dropdown absolute top-full left-0 mt-1 w-44 py-1 z-50 max-h-48 overflow-y-auto"
           :style="{ backgroundColor: ddBg, borderColor: ddBorder }"
           @click.stop
         >
           <div
             v-for="f in fontOptions"
             :key="f"
-            class="rich-dropdown-item text-[11px]"
+            class="rich-dropdown-item text-[12px]"
             :class="{ 'rich-dropdown-active': fontFamily === f }"
+            :style="{ fontFamily: f }"
             @mousedown.prevent="setFontFamily(f); fontDropdownOpen = false"
           >
             {{ f }}
@@ -2107,12 +2261,6 @@ function btnClass(active: boolean) {
 
       <button title="减少缩进" class="rich-btn" @mousedown.prevent="execOutdent" v-html="svg.outdent" />
       <button title="增加缩进" class="rich-btn" @mousedown.prevent="execIndent" v-html="svg.indent" />
-
-      <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
-
-      <!-- ── 列表 ── -->
-      <button title="无序列表" :class="btnClass(active.bullet)" @mousedown.prevent="execBullet" v-html="svg.bulletList" />
-      <button title="有序列表" :class="btnClass(active.ordered)" @mousedown.prevent="execOrdered" v-html="svg.orderedList" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
 
@@ -2189,6 +2337,23 @@ function btnClass(active: boolean) {
       <!-- ── 文档工具 ── -->
       <button title="查找替换 Ctrl+F" class="rich-btn" :class="{ 'rich-btn-active': searchOpen }" @mousedown.prevent="toggleSearch" v-html="svg.search" />
       <button title="打印文档" class="rich-btn" @click="printDocument" v-html="svg.printer" />
+      <div class="relative">
+        <button title="插入符号" class="rich-btn" :class="{ 'rich-btn-active': symbolPanelOpen }" @mousedown.prevent="toggleSymbolPanel" v-html="svg.symbol" />
+        <div
+          v-if="symbolPanelOpen"
+          class="rich-dropdown absolute top-full left-0 mt-1 p-1.5 z-50"
+          :style="{ backgroundColor: ddBg, borderColor: ddBorder, display: 'grid', gridTemplateColumns: 'repeat(4, 30px)', gap: '4px' }"
+          @click.stop
+        >
+          <button
+            v-for="ch in SYMBOLS"
+            :key="ch"
+            class="symbol-cell"
+            @mousedown.prevent="insertSymbol(ch)"
+          >{{ ch }}</button>
+        </div>
+      </div>
+      <div v-if="symbolPanelOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
 
       <div class="flex-1" />
 
@@ -2225,7 +2390,7 @@ function btnClass(active: boolean) {
           width: '160px'
         }"
         @input="debouncedSearch"
-        @keydown.enter="doSearch"
+        @keydown.enter="debouncedSearch.cancel(); doSearch()"
       />
       <input
         v-model="replaceQuery"
@@ -2348,17 +2513,17 @@ function btnClass(active: boolean) {
         </div>
         <template v-if="ctxMenuSelText">
           <div class="ctx-separator" />
-          <div class="ctx-menu-item" @click.stop="execCtxMenuClip">
-            <span>📦 存入素材库</span><span class="ctx-shortcut" />
-          </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToChat">
             <span>💬 添加到 AI 对话</span><span class="ctx-shortcut" />
           </div>
-          <div class="ctx-menu-item" @click.stop="execCtxMenuAddComment">
-            <span>📍 插入批注</span><span class="ctx-shortcut" />
-          </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCandidate">
             <span>📋 添加到候选库</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuClip">
+            <span>📦 存入素材库</span><span class="ctx-shortcut" />
+          </div>
+          <div class="ctx-menu-item" @click.stop="execCtxMenuAddComment">
+            <span>📍 插入批注</span><span class="ctx-shortcut" />
           </div>
           <div class="ctx-menu-item" @click.stop="execCtxMenuAddToCompare">
             <span>↔️ 加入比对</span><span class="ctx-shortcut" />
@@ -2655,6 +2820,24 @@ function btnClass(active: boolean) {
   border: 1px solid;
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.symbol-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: v-bind(btnText);
+  transition: background 0.1s;
+}
+.symbol-cell:hover {
+  background: v-bind(ddHoverBg);
 }
 .rich-dropdown-item {
   display: flex;

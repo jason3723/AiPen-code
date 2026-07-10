@@ -1704,7 +1704,7 @@ defineExpose({ onPlaybackComplete })
               </div>
               <div class="flex-1">
                 <div
-                  class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 leading-relaxed border border-blue-200 dark:border-gray-700/30"
+                  class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 leading-relaxed text-justify border border-blue-200 dark:border-gray-700/30"
                 >
                   <p>
                     好的，我来帮你撰写一篇<strong class="text-blue-600 dark:text-blue-400">{{ state.recipe?.name }}</strong
@@ -1727,7 +1727,7 @@ defineExpose({ onPlaybackComplete })
                 </div>
                 <div class="flex-1">
                   <div
-                    class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 border border-blue-200 dark:border-gray-700/30"
+                    class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 border border-blue-200 dark:border-gray-700/30 text-justify"
                   >
                     {{ interviewStage?.questions[qi - 1]?.question }}
                   </div>
@@ -1736,7 +1736,7 @@ defineExpose({ onPlaybackComplete })
               <div class="flex gap-2.5 ml-auto justify-end max-w-[80%]">
                 <div class="flex-1">
                   <div
-                    class="bg-blue-100 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-800/30 rounded-2xl rounded-tr-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200"
+                    class="bg-blue-100 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-800/30 rounded-2xl rounded-tr-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 text-justify"
                   >
                     {{ state.interviewAnswers[interviewStage?.questions[qi - 1]?.id || ''] || '...' }}
                   </div>
@@ -1754,7 +1754,7 @@ defineExpose({ onPlaybackComplete })
             </div>
             <div class="flex-1">
               <div
-                class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-blue-300 dark:border-blue-800/20"
+                class="bg-blue-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 text-justify border border-blue-300 dark:border-blue-800/20"
               >
                 <p class="mb-2.5">{{ currentQuestion.question }}</p>
                 <!-- 选项按钮 -->
@@ -1786,7 +1786,7 @@ defineExpose({ onPlaybackComplete })
             </div>
             <div class="flex-1">
               <div
-                class="bg-purple-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 border border-purple-300 dark:border-purple-800/20"
+                class="bg-purple-50 dark:bg-gray-800/70 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs text-gray-800 dark:text-gray-200 text-justify border border-purple-300 dark:border-purple-800/20"
               >
                 <p>采访内容已经收集完毕。</p>
                 <p class="mt-1.5 text-purple-600 dark:text-purple-400 font-medium">📝 你还有什么补充说明吗？</p>
@@ -2242,7 +2242,7 @@ defineExpose({ onPlaybackComplete })
                   <span class="text-[11px] font-semibold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent animate-pulse">AI 正在思考...</span>
                 </div>
                 <div v-if="outlineThinkingExpanded || !outlineThinkingDone" ref="outlineThinkingEl" class="px-3 pb-3 max-h-40 overflow-y-auto">
-                  <pre class="text-[11px] whitespace-pre-wrap font-mono leading-relaxed" :class="outlineThinkingDone ? 'text-purple-800/80 dark:text-purple-300/80' : 'text-blue-800/80 dark:text-blue-300/80'">{{ outlineThinking }}</pre>
+                  <pre class="text-[11px] whitespace-pre-wrap font-mono leading-relaxed text-justify" :class="outlineThinkingDone ? 'text-purple-800/80 dark:text-purple-300/80' : 'text-blue-800/80 dark:text-blue-300/80'">{{ outlineThinking }}</pre>
                 </div>
               </div>
             </Transition>
@@ -2271,7 +2271,7 @@ defineExpose({ onPlaybackComplete })
                         @keydown.escape="cancelEditItem"
                         @blur="confirmEditItem"
                       />
-                      <p v-else class="text-xs leading-snug cursor-text hover:bg-white/5 rounded px-1 -mx-1 py-0.5 transition-colors"
+                      <p v-else class="text-xs leading-snug cursor-text hover:bg-white/5 rounded px-1 -mx-1 py-0.5 transition-colors text-justify"
                         :class="item.level === 2 ? 'text-purple-700 dark:text-purple-200 font-semibold' : 'text-emerald-700 dark:text-emerald-200'"
                         :title="'双击编辑标题'"
                       >{{ item.text }}</p>
