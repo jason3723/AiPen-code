@@ -10,6 +10,9 @@ import { Plugin, PluginKey } from 'prosemirror-state'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import { CellSelection } from 'prosemirror-tables'
 import StarterKit from '@tiptap/starter-kit'
+import BulletList from '@tiptap/extension-bullet-list'
+import OrderedList from '@tiptap/extension-ordered-list'
+import ListItem from '@tiptap/extension-list-item'
 import Highlight from '@tiptap/extension-highlight'
 import TextAlign from '@tiptap/extension-text-align'
 import { Table } from '@tiptap/extension-table'
@@ -894,7 +897,16 @@ async function execCtxMenuPaste() {
       //    导致后续 Enter 拆分段落时光标位置映射偏移。
       const doc = textToDocJson(text)
       if (doc.content && doc.content.length > 0) {
-        ed.chain().focus().insertContent(doc.content).run()
+        // 单段落纯文本：只插内联内容，避免把整个 paragraph 块插入光标处
+        // 导致当前段落被切开、头尾各换行；同时该路径不含 \n/hardBreak，
+        // 不会重现当初的「光标跳脱」位移。
+        if (doc.content.length === 1 && doc.content[0].type === 'paragraph') {
+          const inline = doc.content[0].content || []
+          if (inline.length > 0) ed.chain().focus().insertContent(inline).run()
+        } else {
+          // 多段落 / 标题 / 列表：保持块级插入（本就该分段）
+          ed.chain().focus().insertContent(doc.content).run()
+        }
       }
     }
   } catch { /* 剪贴板读取失败 */ }
@@ -1158,6 +1170,10 @@ const editor = useEditor({
       listItem: false,
       link: { openOnClick: false, HTMLAttributes: { class: 'text-blue-500 dark:text-blue-400 underline' } },
     }),
+    // 列表节点仅用于渲染（如教程手册），关闭输入规则，避免敲 `- `/`1. ` 自动转列表
+    BulletList.extend({ addInputRules() { return [] } }),
+    OrderedList.extend({ addInputRules() { return [] } }),
+    ListItem,
     Highlight.configure({ multicolor: true }),
     TextAlign.configure({ types: ['heading', 'paragraph'], alignments: ['left', 'center', 'right', 'justify'] }),
     Table.configure({ resizable: true }),

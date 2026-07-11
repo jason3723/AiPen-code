@@ -8,7 +8,7 @@
 
 | 术语 | 含义 |
 |------|------|
-| **构建** | 前端 vue-tsc + vite build → Tauri cargo build --release → NSIS 打包 → Minisign 签名 |
+| **构建** | 前端 vue-tsc + vite build → Tauri cargo build --release → NSIS 打包 → Minisign 签名（不生成 MSI） |
 | **签名** | Tauri v2 通过环境变量 `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 对 .exe 签名，生成 .sig 文件 |
 | **发布** | 更新 latest.json → 推送到 GitHub → 上传到 GitHub Releases |
 | **版本号** | `package.json` / `tauri.conf.json` / `Cargo.toml` / `latest.json` 中的 version 字段 |
@@ -160,8 +160,7 @@ npm run tauri build
 ```
 src-tauri/target/release/bundle/nsis/
 ├── AiPen_3.0.X_x64-setup.exe         # 安装包
-├── AiPen_3.0.X_x64-setup.exe.sig     # 签名文件
-└── AiPen_3.0.X_x64_en-US.msi         # MSI 安装包（可选）
+└── AiPen_3.0.X_x64-setup.exe.sig     # 签名文件
 ```
 
 ---
@@ -302,10 +301,10 @@ git push origin "v$version"
 1. 打开 `https://github.com/jason3723/AiPen/releases/new?tag=v<VERSION>`
 2. Release title：`v<VERSION>`
 3. 描述：粘贴 `docs/CHANGELOG.md` 中当前版本的更新日志
-4. 上传 3 个文件作为 Release Asset：
+4. 上传以下文件作为 Release Asset：
    - `src-tauri/target/release/bundle/nsis/AiPen_<VERSION>_x64-setup.exe`
    - `src-tauri/target/release/bundle/nsis/AiPen_<VERSION>_x64-setup.exe.sig`
-   - `latest.json`
+   - `latest.json`（注：MSI 安装包不再生成，仅 NSIS）
 5. **双端点说明**：`latest.json` 同时存在于：
    - **Release Asset**（主端点，GitHub CDN 加速）：`https://github.com/jason3723/AiPen/releases/latest/download/latest.json`
    - **Repo 根目录**（备端点，git push）：已通过步骤 5.1 推送，客户端自动 fallback

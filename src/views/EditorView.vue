@@ -552,6 +552,9 @@ function getBrowserViewportRect(): { x: number; y: number; width: number; height
 async function handleOpenBrowser(url: string) {
   const normalized = normalizeUrl(url);
   browserUrlInput.value = normalized;
+  // 同步左侧栏状态：地址栏/素材面板打开浏览器时，也必须把 leftSubTab 设为 'browser'，
+  // 否则切到文档/素材面板时 leftSubTab 未变化、隐藏浏览器的 watch 不触发，网页会一直置顶。
+  leftSubTab.value = 'browser';
   try {
     if (browserOpen.value) {
       // 浏览器已存在（可能处于隐藏状态），先恢复显示并重定位
@@ -1030,76 +1033,89 @@ let browserClipUnlisten: (() => void) | null = null;
 let browserChatUnlisten: (() => void) | null = null;
 let focusUnlisten: (() => void) | null = null;
 let movedUnlisten: (() => void) | null = null;
+let scaleChangedUnlisten: (() => void) | null = null;
 
 onMounted(async () => {
-  await store.initDocument();
-  store.loadFolders();
-
   const win = getCurrentWindow();
-  closeRequestUnlisten = await win.onCloseRequested(async (event) => {
-    event.preventDefault();
-    await tryExit();
-  });
 
-  // 监听浏览器中"存入素材库"事件（emit 通道）
-  browserClipUnlisten = await listen<{ text: string; url?: string; title?: string }>(
-    "browser-clip-selected-text",
-    (event) => {
-      handleBrowserClip(event.payload.text, event.payload.url, event.payload.title);
-    },
-  );
+  try {
+    await store.initDocument();
+    store.loadFolders();
 
-  // 监听浏览器中"添加到 AI 对话"事件（emit 通道）
-  browserChatUnlisten = await listen<{ text: string; url?: string; title?: string }>(
-    "browser-add-to-chat",
-    (event) => {
-      handleBrowserAddToChat(event.payload.text);
-    },
-  );
+    closeRequestUnlisten = await win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      await tryExit();
+    });
 
-  // 注册全局函数，接收 eval 通道的剪藏调用（on_navigation / 自定义协议 eval 后备）
-  (window as any).__aipenReceiveClip = (payload: { text: string; url?: string; title?: string }) => {
-    console.log("[AiPen] __aipenReceiveClip 收到剪藏数据", payload?.text?.length ?? 0, "字符");
-    handleBrowserClip(payload.text, payload.url, payload.title);
-  };
+    // 监听浏览器中"存入素材库"事件（emit 通道）
+    browserClipUnlisten = await listen<{ text: string; url?: string; title?: string }>(
+      "browser-clip-selected-text",
+      (event) => {
+        handleBrowserClip(event.payload.text, event.payload.url, event.payload.title);
+      },
+    );
 
-  // 注册全局函数，接收 eval 通道的"添加到 AI 对话"调用
-  (window as any).__aipenReceiveChat = (payload: { text: string; url?: string; title?: string }) => {
-    console.log("[AiPen] __aipenReceiveChat 收到对话数据", payload?.text?.length ?? 0, "字符");
-    handleBrowserAddToChat(payload.text);
-  };
+    // 监听浏览器中"添加到 AI 对话"事件（emit 通道）
+    browserChatUnlisten = await listen<{ text: string; url?: string; title?: string }>(
+      "browser-add-to-chat",
+      (event) => {
+        handleBrowserAddToChat(event.payload.text);
+      },
+    );
 
-  // 窗口 resize 时重定位浏览器 webview
-  window.addEventListener("resize", onBrowserResize);
+    // 注册全局函数，接收 eval 通道的剪藏调用（on_navigation / 自定义协议 eval 后备）
+    (window as any).__aipenReceiveClip = (payload: { text: string; url?: string; title?: string }) => {
+      console.log("[AiPen] __aipenReceiveClip 收到剪藏数据", payload?.text?.length ?? 0, "字符");
+      handleBrowserClip(payload.text, payload.url, payload.title);
+    };
 
-  // 窗口移动时也重定位浏览器 webview（与 resize 共用同一个处理函数）
-  movedUnlisten = await win.onMoved(() => {
-    onBrowserResize();
-  });
+    // 注册全局函数，接收 eval 通道的"添加到 AI 对话"调用
+    (window as any).__aipenReceiveChat = (payload: { text: string; url?: string; title?: string }) => {
+      console.log("[AiPen] __aipenReceiveChat 收到对话数据", payload?.text?.length ?? 0, "字符");
+      handleBrowserAddToChat(payload.text);
+    };
 
-  // 监听主窗口焦点变化：
-  //   - 主窗口获焦 + browser tab 激活 → resize + show（从最小化恢复时）
-  //   - 失焦时不再需要手动 hide——owned window 自动跟随 owner 隐藏
-  focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
-    // 缩放过渡期间跳过，防止 show_browser / hide_browser 引发额外闪烁
-    if (isResizing.value) return;
-    if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
-      try {
-        if (focused) {
-          // 主窗口被聚焦 / 从最小化恢复 → resize + show
-          const minimized = await getCurrentWindow().isMinimized();
-          if (!minimized) {
-            const vp = getBrowserViewportRect();
-            if (vp) {
-              await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
+    // 窗口 resize 时重定位浏览器 webview
+    window.addEventListener("resize", onBrowserResize);
+
+    // 窗口移动时也重定位浏览器 webview（与 resize 共用同一个处理函数）
+    movedUnlisten = await win.onMoved(() => {
+      onBrowserResize();
+    });
+
+    // DPI / 显示缩放变化（拖到不同缩放比例的显示器、或仅改系统缩放不移动窗口）时，
+    // 主动重定位浏览器 webview，消除对齐死角
+    scaleChangedUnlisten = await win.onScaleChanged(() => {
+      onBrowserResize();
+    });
+
+    // 监听主窗口焦点变化：
+    //   - 主窗口获焦 + browser tab 激活 → resize + show（从最小化恢复时）
+    //   - 失焦时不再需要手动 hide——owned window 自动跟随 owner 隐藏
+    focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
+      // 缩放过渡期间跳过，防止 show_browser / hide_browser 引发额外闪烁
+      if (isResizing.value) return;
+      if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
+        try {
+          if (focused) {
+            // 主窗口被聚焦 / 从最小化恢复 → resize + show
+            const minimized = await getCurrentWindow().isMinimized();
+            if (!minimized) {
+              const vp = getBrowserViewportRect();
+              if (vp) {
+                await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
+              }
+              await invoke("show_browser");
             }
-            await invoke("show_browser");
           }
-        }
-        // 失焦分支已删除：owned window 自动跟随 owner 隐藏/最小化/恢复
-      } catch { /* 忽略 */ }
-    }
-  });
+          // 失焦分支已删除：owned window 自动跟随 owner 隐藏/最小化/恢复
+        } catch { /* 忽略 */ }
+      }
+    });
+  } finally {
+    // 确保窗口一定显示，避免初始化失败导致窗口永远隐藏
+    await win.show();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -1109,6 +1125,7 @@ onBeforeUnmount(() => {
   browserChatUnlisten?.();
   focusUnlisten?.();
   movedUnlisten?.();
+  scaleChangedUnlisten?.();
   window.removeEventListener("resize", onBrowserResize);
   delete (window as any).__aipenReceiveClip;
   delete (window as any).__aipenReceiveChat;
@@ -1148,6 +1165,8 @@ async function handleMaximize() {
   await flushCompositorFrame();
 
   overlayVisible.value = false;
+  // 最大化/全屏后主区域尺寸已变，主动让浏览器 webview 重新跟随
+  if (browserOpen.value) onBrowserResize();
 }
 
 async function handleToggleFullscreen() {

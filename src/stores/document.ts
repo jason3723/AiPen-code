@@ -5,7 +5,6 @@ import { textToDocJson } from "../utils/textToDocJson";
 import { markdownToDocJson } from "../utils/markdownToDocJson";
 import { useExportSettingsStore } from "./exportSettings";
 import type { Comment } from "../types/comment";
-import tutorialMd from "../assets/tutorial.md?raw";
 import pkg from "../../package.json";
 
 // ── 教程文档常量 ──
@@ -238,11 +237,64 @@ export const useDocumentStore = defineStore("document", () => {
 
   /** 教程 ProseMirror JSON 缓存（懒加载，仅首次启动时转换一次） */
   let _tutorialJson: any = null;
+  /** 教程原文缓存（统一从 Rust 拉取，dev / prod 走不同路径） */
+  let _tutorialMd: string = "";
+  /**
+   * 拉取教程原文 Markdown。
+   * 唯一来源：Rust command `get_tutorial_markdown`。
+   *   - dev 模式：Rust command 走源码相对路径 `src-tauri/resources/tutorial.md`
+   *   - install 后：Rust command 走 Tauri Resource 目录
+   * 改教程只需要改 `src-tauri/resources/tutorial.md` 一处。
+   */
+  async function fetchTutorialMarkdown(): Promise<string> {
+    if (_tutorialMd) return _tutorialMd;
+    try {
+      const md = await invoke<string>("get_tutorial_markdown");
+      if (md && md.trim()) {
+        _tutorialMd = md;
+        console.log("[tutorial] 教程原文已加载，长度", _tutorialMd.length);
+        return _tutorialMd;
+      }
+    } catch (e) {
+      console.warn("[tutorial] 拉取教程失败:", e);
+    }
+    console.error("[tutorial] 教程原文为空，教程将无法创建");
+    return "";
+  }
+
   function getTutorialDocJson(): any {
     if (!_tutorialJson) {
-      _tutorialJson = markdownToDocJson(tutorialMd);
+      // 防御：确保 markdown 原文非空
+      if (!_tutorialMd || !_tutorialMd.trim()) {
+        console.error("[tutorial] 教程原文为空，放弃转换");
+        _tutorialJson = { type: 'doc', content: [] };
+        return _tutorialJson;
+      }
+      try {
+        _tutorialJson = markdownToDocJson(_tutorialMd);
+        // 如果解析出空文档，用 textToDocJson 兜底
+        if (!_tutorialJson || !_tutorialJson.content || _tutorialJson.content.length === 0) {
+          console.warn("[tutorial] TipTap 解析结果为空，使用 textToDocJson 兜底");
+          _tutorialJson = textToDocJson(_tutorialMd);
+        }
+      } catch (e) {
+        console.error("[tutorial] markdownToDocJson 解析失败:", e);
+        // TipTap 解析失败时，降级使用轻量 Markdown 解析
+        _tutorialJson = textToDocJson(_tutorialMd);
+      }
     }
     return _tutorialJson;
+  }
+
+  /** 判断草稿内容是否健康（非空文档） */
+  function isDraftContentHealthy(draft: string | null): boolean {
+    if (!draft) return false;
+    try {
+      const parsed = JSON.parse(draft);
+      return parsed && parsed.content && parsed.content.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   // ── 文件夹状态 ──
@@ -404,23 +456,69 @@ export const useDocumentStore = defineStore("document", () => {
 
   // ── 操作 ──
 
-  /** 安装/升级后确保教程文档存在且为最新版本（不会切换过去，静默创建/替换） */
+  /**
+   * 安装/升级后确保教程文档存在且内容完整。
+   *
+   * 行为约定：
+   *  1. **版本变更**（升级后第一次启动）：删除旧版教程 → 重建新版教程（无视用户是否曾删除）
+   *  2. **版本未变**：
+   *     - 教程存在且内容非空 → 跳过
+   *     - 教程存在但内容为空 → 删除重建（保底）
+   *     - 教程不存在（用户主动删除）→ **不再补建**，尊重用户选择
+   */
   async function createTutorialDocument() {
     try {
       const lastVersion = localStorage.getItem(LS_VERSION_KEY);
-      // 版本未变且文档存在 → 无需操作
-      if (lastVersion === pkg.version) {
-        const docs = await invoke<Document[]>("list_documents");
-        if (docs.some((d: Document) => d.title === TUTORIAL_TITLE)) return;
-        // 版本未变但文档被用户误删 → 补建（不检查旧版本，直接新建）
-      }
+      const isVersionChanged = lastVersion !== pkg.version;
+      let needRecreate = isVersionChanged;
 
+      // 1) 列出当前文档
       const docs = await invoke<Document[]>("list_documents");
-      // 删除已存在的旧版教程（确保替换为安装包里最新版本）
       const existing = docs.find((d: Document) => d.title === TUTORIAL_TITLE);
+
       if (existing) {
+        // 教程已存在
+        if (!isVersionChanged) {
+          // 同版本 → 检查内容
+          try {
+            const draft = await invoke<string | null>("get_draft", { docId: existing.id });
+            // 注意：不能只判断 draft 字符串非空。4.2.0 创建失败时会存下
+            // `{"type":"doc","content":[]}` 这样的“空文档”——它是非空字符串，
+            // 但内容为空。必须解析出真实 content 长度才能判定内容健康。
+            if (isDraftContentHealthy(draft)) {
+              console.log("[tutorial] 教程存在且内容正常，跳过重建");
+              return;
+            }
+          } catch { /* get_draft 失败，按"空内容"处理 */ }
+          // 内容为空 → 重建
+          console.warn("[tutorial] 教程存在但内容为空（空文档 JSON 或解析失败），删除重建");
+          needRecreate = true;
+        }
+        // 走到这里 = 需要重建（版本变更 或 内容空）
         await invoke("delete_document", { docId: existing.id });
         documents.value = documents.value.filter(d => d.id !== existing.id);
+        // 同步重置缓存
+        _tutorialJson = null;
+      } else if (!isVersionChanged) {
+        // 教程不存在 + 版本未变 → 用户主动删除过 → 不再补建
+        console.log("[tutorial] 教程已被用户删除（非升级场景），尊重选择不再补建");
+        return;
+      }
+
+      if (!needRecreate) return;
+
+      // 2) 拉取教程原文（双源：前端 ?raw → Rust command）
+      const md = await fetchTutorialMarkdown();
+      if (!md || !md.trim()) {
+        console.error("[tutorial] 教程原文为空，放弃创建（install 资源可能丢失）");
+        return;
+      }
+
+      // 3) 解析 + 写入
+      const tutorialJson = getTutorialDocJson();
+      if (!tutorialJson || !tutorialJson.content || tutorialJson.content.length === 0) {
+        console.error("[tutorial] 教程内容解析为空，放弃创建");
+        return;
       }
 
       const doc = await invoke<Document>("create_document", {
@@ -428,17 +526,35 @@ export const useDocumentStore = defineStore("document", () => {
       });
       documents.value.unshift(doc);
 
-      // 将教程内容保存为草稿
-      const tutorialJson = getTutorialDocJson();
       await invoke("save_draft", {
         docId: doc.id,
         content: JSON.stringify(tutorialJson),
       });
 
+      // 验证持久化
+      const savedDraft = await invoke<string | null>("get_draft", { docId: doc.id });
+      if (!savedDraft) {
+        console.error("[tutorial] save_draft 验证失败——尝试 textToDocJson 兜底重建");
+        const fallbackJson = textToDocJson(md);
+        if (fallbackJson && fallbackJson.content && fallbackJson.content.length > 0) {
+          await invoke("save_draft", {
+            docId: doc.id,
+            content: JSON.stringify(fallbackJson),
+          });
+          const recheck = await invoke<string | null>("get_draft", { docId: doc.id });
+          if (recheck) {
+            console.log(`[tutorial] 兜底保存成功，${fallbackJson.content.length} 个块级节点`);
+          } else {
+            console.error("[tutorial] 兜底 save_draft 仍然验证失败");
+          }
+        }
+      }
+
+      console.log(`[tutorial] 教程文档已创建，${tutorialJson.content.length} 个块级节点`);
+      // 4) 更新 localStorage 版本号（必须在所有路径都执行一次）
       localStorage.setItem(LS_VERSION_KEY, pkg.version);
     } catch (err) {
-      // 教程创建失败不影响正常使用
-      console.error("创建教程文档失败:", err);
+      console.error("[tutorial] 创建教程文档失败:", err);
     }
   }
 
@@ -455,11 +571,16 @@ export const useDocumentStore = defineStore("document", () => {
         documents.value = docs;
         // 新版本首次启动时静默插入教程文档
         await createTutorialDocument();
-        // 始终加载用户原本的最新文档
-        await switchDocument(docs[0].id);
+        // 始终加载用户原本的最新文档（使用 documents.value 而非 docs，
+        // 因为 createTutorialDocument 可能已修改了列表）
+        await switchDocument(documents.value[0].id);
       } else {
-        // 首次启动：创建教程文档 + 普通文档
+        // 首次启动：先创建教程文档并加载渲染，再创建空白文档
         await createTutorialDocument();
+        // 确保教程文档内容已加载到编辑器
+        if (documents.value.length > 0) {
+          await switchDocument(documents.value[0].id);
+        }
         await createNewDocument();
       }
     } catch (err) {

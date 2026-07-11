@@ -2487,3 +2487,48 @@ pub async fn print_document(html: String, title: String) -> Result<(), String> {
 
     Ok(())
 }
+
+// ─── 教程文档原文获取 ─────────────────────────────────────────
+// 根因：4.2.0 教程通过前端 `?raw` 导入，install 后该资源不被 Tauri 打包 → 安装后教程为空。
+// 修复：用 `include_str!` 编译进二进制，无文件依赖，永不丢失。
+// dev 模式如需热更新教程，改 `src-tauri/resources/tutorial.md` 后重新 build
+//（或 cargo check / cargo build 触发重编译，因为 include_str! 内容变更会重新编译 crate）。
+//
+// 同时保留 filesystem fallback：dev 模式下直接改文件无需重编译即可读取最新内容。
+#[tauri::command]
+pub async fn get_tutorial_markdown(_app_handle: tauri::AppHandle) -> Result<String, String> {
+    // 1) dev 模式：优先读源码文件（改教程后无需重编译就能生效）
+    let dev_paths = [
+        "src-tauri/resources/tutorial.md",
+        "resources/tutorial.md",
+        "../resources/tutorial.md",
+    ];
+    for rel in dev_paths {
+        if let Ok(s) = std::fs::read_to_string(rel) {
+            if !s.trim().is_empty() {
+                eprintln!("[tutorial] dev 模式命中: {} ({} chars)", rel, s.len());
+                return Ok(s);
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for rel in ["src-tauri/resources/tutorial.md", "resources/tutorial.md"] {
+            let p = cwd.join(rel);
+            if let Ok(s) = std::fs::read_to_string(&p) {
+                if !s.trim().is_empty() {
+                    eprintln!("[tutorial] cwd 模式命中: {:?} ({} chars)", p, s.len());
+                    return Ok(s);
+                }
+            }
+        }
+    }
+
+    // 2) install 后：用 include_str! 编译进二进制，永不丢失
+    let embedded = include_str!("../resources/tutorial.md");
+    if !embedded.trim().is_empty() {
+        eprintln!("[tutorial] include_str! 命中，{} chars", embedded.len());
+        return Ok(embedded.to_string());
+    }
+
+    Err("tutorial.md 未找到（源码文件不存在且编译内置为空）".into())
+}

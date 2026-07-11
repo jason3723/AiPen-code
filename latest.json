@@ -1,11 +1,11 @@
 {
-  "version": "4.2.0",
-  "notes": "🔧 优化\n- 字体下拉列表选项使用自身字体样式渲染，所见即所得\n- 工具栏字体按钮当前字体名使用自身样式展示\n- 修复 Ω 符号图标在工具栏中偏小的问题（SVG viewBox 适配）\n- 修复符号面板 CSS Grid 1fr 列在 absolute 定位中塌缩导致元素挤在一起的问题\n- 符号面板改为向右弹出（left-0），整体更紧凑（30×30 格子），不再遮挡编辑器\n- 字体下拉列表宽度适配长中文字体名\n- Word 导出新增高亮颜色映射，支持 yellow/red/blue 等多色导出\n- Word 导出默认标题加粗关停、默认字号统一为 16pt\n\n🐛 修复\n- diff 比对播放被中断时自动恢复原文内容，避免编辑器停留在半改状态\n\n📝 变更\n- 移除 AI 聊天消息右键菜单（简化交互）\n- 教程新增「编辑器比对」章节",
-  "pub_date": "2026-07-10T06:59:00Z",
+  "notes": "🐛 修复\n\n- 修复新版本使用手册（教程文档）打开后内容空白：4.2.1 引入的新版 tutorial.md 含大量列表，但编辑器 schema 未注册列表节点，导致 setContent 抛错并重置为空文档（只剩标题）。已恢复列表节点支持，教程与含列表的用户文档均可正常渲染。\n\n📝 变更\n\n- 列表节点仅在 schema 层注册用于渲染，关闭其输入规则（敲 - 或 1. 不再自动转列表），工具栏不显示列表按钮。",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.0_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkdpSWljSnZiVllyVE1jb3FvdXBJNW90cUtaRzEva2dRMUh1YkxDNmdVRVVOWG8rRUo3ajZlWVN6eUlTa1J6anRDaWhGdzh2eGxpUDZ5YzJxS05WcndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNjY2NzQ4CWZpbGU6QWlQZW5fNC4yLjBfeDY0LXNldHVwLmV4ZQpSYkw2OFdmbGdtMFpYdmdHc1ozMlVlY0VEWlpWR2NuYm5oYUlaSHNyZjZiZ2VpRG9FZzBzRVRiMCtJNUlQZkQvQnlZNFRqa2RSYm82Y3U3T2lDdldCZz09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkVCbitSWEZ2ZlJnY1dMaTFRL0cxMDJNZnNZUndHQnpVUXJId0ZLeG9GMW9wc2lodTR0N0oxa1g2UHdienkyN2dMMHNMd0h2WFRaTHNqNVFtUzdUa1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNjkyNTgyCWZpbGU6QWlQZW5fNC4yLjJfeDY0LXNldHVwLmV4ZQpXQ0NZa0x4WEg3d0FNdW9QSjQ2QWQzNWhYTmkwcG54bTFkSzN0UG1sSitLNE9vR0V3Snd6dnlGT3BMSWNKdTUyQ2h4cDRUWENaNFVmQjhGY1FVbWxDdz09Cg==",
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.2_x64-setup.exe"
     }
-  }
+  },
+  "pub_date": "2026-07-10T14:12:31Z",
+  "version": "4.2.2"
 }

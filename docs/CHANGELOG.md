@@ -1,5 +1,32 @@
 # AiPen 更新日志
 
+## v4.2.2 (2026-07-10)
+
+### 🐛 修复
+
+- **修复新版本使用手册（教程文档）打开后内容空白的问题**：4.2.1 引入的新版 `src-tauri/resources/tutorial.md` 包含大量无序/有序列表，但编辑器 schema 未注册列表节点，导致 `setContent` 抛出 `Node type "bulletList" not found` 并被 `try/catch` 重置为空文档（只剩标题）。已恢复编辑器对 `bulletList`/`orderedList`/`listItem` 节点的支持，教程与含列表的用户文档均可正常渲染。
+- **修复内置浏览器窗口在最大化/全屏后不跟随放大、四周留白的问题**：最大化与沉浸模式切换时，窗口 `resize` 事件在 `isResizing` 标记期间被 `onBrowserResize` 拦截，且结束后无 trailing 事件，导致浏览器 WebView 停留在旧尺寸。`handleMaximize` / `handleToggleFullscreen` 收尾时主动重定位浏览器；并新增 `onScaleChanged` 监听，在 DPI / 显示缩放变化（如拖到不同缩放比显示器）时也重定位，消除对齐死角。
+- **修复经地址栏/素材面板打开浏览器后，切换到文档/素材面板时网页仍置顶不消失的问题**：原打开路径只调用 `show_browser` 弹出覆盖层，未将 `leftSubTab` 同步为 `'browser'`，导致切到文档/素材时 `leftSubTab` 未变化、隐藏浏览器的 `watch` 不触发。`handleOpenBrowser` 现同步 `leftSubTab = 'browser'`，使地址栏/素材面板打开与"浏览器"标签页打开状态一致，切面板即可正确隐藏浏览器（并顺带让"切换即保"对地址栏打开的浏览器也生效）。
+- **修复右键菜单粘贴单段文字时头尾自动换行的问题**：右键"粘贴"走 `execCtxMenuPaste`，经 `textToDocJson` 把每行包成独立 `paragraph` 块后整体 `insertContent`，插入光标所在段落中间时被切开，导致头尾各断一行。现对单段落纯文本只插入其内联内容（不插 `paragraph` 块），光标停在文末、不再换行；多段落/标题/列表仍按块级插入（本就该分段）。该路径不含 `\n`、不产生 `hardBreak` 内联节点，因此不会重现此前已修复的"光标跳脱"位移。仅影响右键菜单粘贴，Ctrl+V 原生粘贴路径不受影响。
+
+### 📝 变更
+
+- 列表节点仅在 schema 层注册用于渲染，**关闭其输入规则**（敲 `- `/`1. ` 不再自动转为列表），且工具栏不显示列表按钮，保持编辑体验简洁。
+
+---
+
+## v4.2.1 (2026-07-10)
+
+### 🐛 修复
+
+- **修复安装包安装后教程文档不显示问题**：4.2.0 之前教程通过前端 `?raw` 导入 Vite，build 后该资源未被 Tauri installer 正确打包，导致安装后 `tutorialMd` 为空字符串、教程文档内容空白。
+  - 把 `tutorial.md` 加入 `tauri.conf.json` 的 `bundle.resources`，由 installer 真正打入 Resource 目录
+  - 新增 Rust command `get_tutorial_markdown`，按候选路径顺序读取（Resource 目录 → 可执行文件旁 → dev 模式源码路径）
+  - 前端 `createTutorialDocument` 改为**单一来源**拉取：通过 `invoke('get_tutorial_markdown')` 拿原文。dev 模式由 Rust 端通过源码相对路径兜底，install 后走 Tauri Resource 目录——**改教程只需改 `src-tauri/resources/tutorial.md` 一处**，删除了 `src/assets/tutorial.md` 副本
+  - 重构 `createTutorialDocument` 行为：版本变更才强制重建；用户主动删除教程后**不再自动补建**，尊重用户选择
+
+---
+
 ## v4.2.0 (2026-07-10)
 
 ### 🔧 优化
@@ -17,6 +44,7 @@
 ### 🐛 修复
 
 - diff 比对播放被中断时自动恢复原文内容，避免编辑器停留在半改状态
+- 修复教程文档创建后内容为空的问题：增加 Markdown 解析异常兜底（textToDocJson 降级）+ 已有文档内容校验（空内容自动重建）
 
 ### 📝 变更
 

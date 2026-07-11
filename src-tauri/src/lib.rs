@@ -282,6 +282,7 @@ pub fn run() {
             commands::show_browser,
             commands::set_browser_theme,
             commands::print_document,
+            commands::get_tutorial_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
