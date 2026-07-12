@@ -14,6 +14,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::BOOL;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
 
 // ─── 精神融入：内置知识库摘要索引 ──────────────────────────────
 // 每个内置 KB 一句话描述，用于 AI 阶段 1 做精匹配
@@ -371,6 +375,20 @@ pub async fn analyze_revision(
     }
 
     Ok(analysis)
+}
+
+#[tauri::command]
+pub async fn proofread(
+    state: State<'_, crate::AppState>,
+    text: String,
+) -> Result<Vec<ai::ProofreadItem>, String> {
+    let config = {
+        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?;
+        cfg.clone()
+    };
+    ai::proofread_document(&text, &config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1841,6 +1859,28 @@ fn get_hwnd(window: &tauri::WebviewWindow) -> Result<*mut core::ffi::c_void, Str
     }
 }
 
+/// 彻底消除最大化/还原闪屏：关闭 DWM 过渡动画，窗口瞬间到位（无缩放撕裂）。幂等。
+#[cfg(target_os = "windows")]
+pub fn disable_dwm_transitions(window: &tauri::WebviewWindow) {
+    if let Ok(hwnd) = get_hwnd(window) {
+        unsafe {
+            let enable: BOOL = BOOL(1);
+            let _ = DwmSetWindowAttribute(
+                HWND(hwnd),
+                DWMWA_TRANSITIONS_FORCEDISABLED,
+                &enable as *const BOOL as *const core::ffi::c_void,
+                std::mem::size_of::<BOOL>() as u32,
+            );
+        }
+    }
+}
+
+/// 设置 webview 背景色，消除 resize 时默认白/黑底闪现。
+#[cfg(target_os = "windows")]
+pub fn set_webview_bg(window: &tauri::WebviewWindow, color: tauri::window::Color) {
+    let _ = window.set_background_color(Some(color));
+}
+
 const BROWSER_INIT_SCRIPT: &str = r#"
 (function() {
   'use strict';
@@ -2318,6 +2358,13 @@ pub async fn create_browser_webview(
     // ★ owned window 关系已建立，最小化/恢复/Win+D 全部由 OS 自动处理
     // 不再需要监听浏览器失焦手动 hide（v1 旧逻辑已删除）
 
+    // 彻底消除缩放闪屏：关闭浏览器窗口 DWM 过渡 + 设白底（浏览器显示真实网页多白底）
+    #[cfg(target_os = "windows")]
+    {
+        disable_dwm_transitions(&wv);
+        set_webview_bg(&wv, tauri::window::Color(255, 255, 255, 255));
+    }
+
     Ok(())
 }
 
@@ -2433,6 +2480,19 @@ pub async fn set_browser_theme(app: tauri::AppHandle, dark: bool) -> Result<(), 
         let theme = if dark { "dark" } else { "light" };
         let js = format!("window.__aipenTheme = '{}';", theme);
         wv.eval(&js).map_err(|e| format!("设置浏览器主题失败: {}", e))?;
+        // 浏览器显示真实网页（多为白底），背景固定为白，避免暗壳/白闪反差
+        #[cfg(target_os = "windows")]
+        set_webview_bg(&wv, tauri::window::Color(255, 255, 255, 255));
+    }
+    // 主窗口背景随主题同步，消除 resize 时白/黑底闪现
+    #[cfg(target_os = "windows")]
+    if let Some(main_win) = app.get_webview_window("main") {
+        let color = if dark {
+            tauri::window::Color(30, 31, 43, 255) // #1e1f2b
+        } else {
+            tauri::window::Color(248, 249, 250, 255) // #f8f9fa
+        };
+        set_webview_bg(&main_win, color);
     }
     Ok(())
 }

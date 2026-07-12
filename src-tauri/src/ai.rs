@@ -107,6 +107,23 @@ pub struct ChatMessagePayload {
     pub content: String,
 }
 
+/// 单条校对结果（偏移均为【原文】的字符下标，从 0 起）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofreadItem {
+    /// 错别字 | 标点 | 语法 | 用词 | 格式
+    pub category: String,
+    /// 起始字符下标（含）
+    pub start: usize,
+    /// 结束字符下标（不含）
+    pub end: usize,
+    /// 原文片段（应与原文 start..end 子串一致）
+    pub original: String,
+    /// 建议替换为
+    pub suggestion: String,
+    /// 简短原因
+    pub reason: String,
+}
+
 /// 单文档评分结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionScore {
@@ -289,6 +306,166 @@ pub async fn analyze_revision(
     let system_prompt = "你是一位资深编辑，精通文档审阅与修改分析。请用中文回答，保持专业、客观、具体。请严格以 JSON 格式输出。";
     let response = chat_completion(&messages, system_prompt, temperature, config).await?;
     parse_analysis_response(&response)
+}
+
+/// 校对文档纯文本（DeepSeek zero-shot 纠错）
+///
+/// - 复用全局 AIConfig（模型/地址/密钥），不单独设模型
+/// - 强制关闭 thinking，保证返回的是纯 JSON（不混入推理过程）
+/// - 偏移为【原文】字符下标，前端据此映射回 ProseMirror 文档位置
+pub async fn proofread_document(
+    text: &str,
+    config: &AIConfig,
+) -> Result<Vec<ProofreadItem>, AIError> {
+    if config.api_key.is_empty() {
+        return Err(AIError::NotConfigured);
+    }
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let prompt = build_proofread_prompt(text);
+    let system_prompt = "你是一位严谨的中文公文校对专家。请严格只输出 JSON 数组，不要任何解释、不要 markdown 代码块。";
+
+    // 克隆配置并强制关闭 thinking，避免推理 token 污染 JSON 输出
+    let mut cfg = config.clone();
+    cfg.thinking_enabled = false;
+
+    let body = json!({
+        "model": &cfg.model,
+        "max_tokens": 8192,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    });
+    let body = apply_thinking_params(body, &cfg);
+
+    let response = send_ai_request(&cfg, body).await?;
+    parse_proofread_response(&response, text)
+}
+
+/// 构建校对提示词
+fn build_proofread_prompt(text: &str) -> String {
+    format!(
+        r#"你是一位严谨的中文公文校对专家。请校对下面【原文】中的文本，找出错误并给出修改建议。
+
+## 校对范围
+- 错别字：形近字、音近字/同音字混淆（如"天汽"→"天气"、"以经"→"已经"）
+- 的/地/得误用：定语后"的"、状语后"地"、补语前"得"
+- 成语与固定搭配：误写误用（如"再接再励"→"再接再厉"）
+- 量词/数量词：量词搭配不当或其中的错别字（如"十快钱"→"十块钱"）
+- 标点误用：全半角、中英文混用、缺失/多余、引号书名号配对（如英文","→中文"，"）
+- 语法错误：搭配不当、成分残缺、语序不当（如"我饭吃完了"）
+- 用词不当：公文语境下不准确、不得体的表述
+- 格式问题：数字、单位、序号格式错误
+- 专有表述/术语准确性：官方术语、政治表述、机构与会议名称等的规范性与正确性。特别留意的类别（边界定义仅供识别，凡明显错误、非标准、过时或错别字都报，存疑不报）：注意——标准表述要核对完整性与规范写法，漏字/错字都算可报，例如"习近平中国特色社会主义思想"漏"新时代"，应纠正为"习近平新时代中国特色社会主义思想"。
+  · 指导思想：以"思想""理论""观"结尾的系统性论述，通常带人名
+  · 理论体系：成体系的理论集合，而非单一论断
+  · 重要会议：带"大会""全会""会议"且召开周期固定
+  · 纲领性文件：带书名号或引号的规划/纲要/报告/章程
+  · 机构组织：党政机关正式编制单位，注意简称时效性（已撤并/更名者勿用旧称）
+  · 国家战略：以"战略"结尾或上升到国家层面的长期部署
+  · 布局与理念：如"五位一体""新发展理念"等固定搭配
+  · 党建与政治建设：主语为"党"或涉及党内制度、作风、纪律
+  · 常用固定表述：四字格、对仗句、公文高频成语/短语
+
+## 严格要求
+1. 高精度优先：只报告你有把握的错误，不确定的不要报。语义层面的逻辑矛盾、语义冗余不在此范围，交给其他技能处理。
+2. 专有表述/术语（含人名、机构、会议、文件等）应核对标准写法：明显字错、名称过时、错误搭配、以及标准表述的完整性缺失（如漏写"新时代"）都可报；但不要改写本就正确规范的既有表述、规范译名或存疑名称；数字、日期、引用原文不得改动。
+3. 下标必须严格对应【原文】的字符位置：start 为起始字符下标（从 0 起，含），end 为结束下标（不含）。换行符也算一个字符，务必数准。
+4. original 必须是【原文】中 start..end 对应的真实子串，与原文字符完全一致。
+5. 只输出 JSON 数组，不要任何解释、不要 markdown 代码块、不要用 ```json 包裹。
+6. 若全文无误，输出空数组 []。
+
+## 输出格式
+[
+  {{"category":"错别字|的地得|成语|量词|标点|语法|用词|格式|术语","start":0,"end":2,"original":"原词","suggestion":"改词","reason":"简短原因"}}
+]
+
+## 原文
+{text}"#,
+        text = text,
+    )
+}
+
+/// 解析校对响应：容错剥离代码块、截取数组、校验偏移与原文一致性
+fn parse_proofread_response(raw: &str, text: &str) -> Result<Vec<ProofreadItem>, AIError> {
+    // 1. 剥离可能的 ```json / ``` 围栏
+    let cleaned = strip_code_fences(raw);
+
+    // 2. 截取首个 [ ... ] 片段
+    let arr_str = match (cleaned.find('['), cleaned.rfind(']')) {
+        (Some(s), Some(e)) if e > s => &cleaned[s..=e],
+        _ => return Ok(Vec::new()),
+    };
+
+    let parsed: Vec<ProofreadItem> = match serde_json::from_str::<Vec<ProofreadItem>>(arr_str) {
+        Ok(v) => v,
+        Err(e) => {
+            // 解析失败不整体报错，返回空（避免一次格式问题卡死整个功能）
+            eprintln!("[AiPen] 校对结果 JSON 解析失败: {}", e);
+            return Ok(Vec::new());
+        }
+    };
+
+    let len = text.chars().count();
+    let mut items = Vec::with_capacity(parsed.len());
+    for mut it in parsed {
+        // 偏移合法性校验（字符空间）
+        if it.start >= it.end || it.end > len {
+            continue;
+        }
+        // 原文片段一致性校验：若与偏移子串不符，尝试在字符空间内重定位 original
+        let slice: String = text.chars().skip(it.start).take(it.end - it.start).collect();
+        if slice != it.original {
+            match char_find(text, &it.original) {
+                Some(pos) => {
+                    let olen = it.original.chars().count();
+                    it.start = pos;
+                    it.end = pos + olen;
+                }
+                None => continue, // 无法定位，丢弃该项
+            }
+        }
+        // 建议为空视为无需修改，忽略
+        if it.suggestion.trim().is_empty() {
+            continue;
+        }
+        items.push(it);
+    }
+    Ok(items)
+}
+
+/// 在字符空间内查找子串起始下标（str::find 返回字节下标，校对偏移用字符下标，故自行实现）
+fn char_find(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let h: Vec<char> = haystack.chars().collect();
+    let n: Vec<char> = needle.chars().collect();
+    if n.len() > h.len() {
+        return None;
+    }
+    for i in 0..=(h.len() - n.len()) {
+        if h[i..i + n.len()] == n[..] {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// 剥离 markdown 代码块围栏
+fn strip_code_fences(s: &str) -> String {
+    let s = s.trim();
+    if let Some(stripped) = s.strip_prefix("```json") {
+        stripped.trim_end_matches("```").trim().to_string()
+    } else if let Some(stripped) = s.strip_prefix("```") {
+        stripped.trim_end_matches("```").trim().to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 /// 构建分析提示词

@@ -9,16 +9,20 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDocumentStore } from '../stores/document'
 import { useCompareStore } from '../stores/compareStore'
+import { useProofreadStore } from '../stores/proofreadStore'
 import { useConfirm } from '../composables/useConfirm'
 import type { Comment } from '../types/comment'
 import CompareView from './CompareView.vue'
 
 const store = useDocumentStore()
 const compareStore = useCompareStore()
+const proofreadStore = useProofreadStore()
 const { confirm } = useConfirm()
 
 const emit = defineEmits<{
   jump: [commentId: string]
+  jumpProofread: [id: string]
+  replaceProofread: [id: string]
 }>()
 
 // ── 面板状态（从 compareStore 读取） ──
@@ -26,9 +30,17 @@ const emit = defineEmits<{
 const panelOpen = computed(() => compareStore.panelOpen)
 const activeTab = computed(() => compareStore.activeTab)
 
-function switchTab(tab: 'comment' | 'compare') {
+function switchTab(tab: 'comment' | 'compare' | 'proofread') {
   compareStore.activeTab = tab
 }
+
+// ── 三 section 存在性 ──
+const hasProofread = computed(() => proofreadStore.hasItems)
+/** 同时存在多个 section 时才显示 tab 栏，否则只显示单标题 */
+const showTabs = computed(() => {
+  const n = (hasComments.value ? 1 : 0) + (hasCompare.value ? 1 : 0) + (hasProofread.value ? 1 : 0)
+  return n > 1
+})
 
 // ── 批注数据 ──
 
@@ -51,7 +63,7 @@ const liveCount = computed(() => sortedComments.value.filter(c => !c.orphan).len
 const orphanCount = computed(() => sortedComments.value.length - liveCount.value)
 const hasComments = computed(() => sortedComments.value.length > 0)
 const hasCompare = computed(() => compareStore.hasEntries)
-const hasAny = computed(() => hasComments.value || hasCompare.value)
+const hasAny = computed(() => hasComments.value || hasCompare.value || hasProofread.value)
 
 function formatDate(iso: string): string {
   try {
@@ -128,6 +140,48 @@ watch(editingId, (id) => {
   })
 })
 
+// ── 校对：trigger 列表（面板关闭时按存在顺序纵向排列） ──
+const ICON = {
+  comment: `<svg class="panel-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 8h10M7 12h10M7 16h4" /></svg>`,
+  compare: `<svg class="panel-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="8" height="16" rx="1" /><rect x="14" y="4" width="8" height="16" rx="1" /><path d="M10 12h4" /></svg>`,
+  proofread: `<svg class="panel-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M8.5 11.5l1.8 1.8 3.2-3.6"/></svg>`,
+}
+const visibleTriggers = computed(() => {
+  const arr: { key: 'comment' | 'compare' | 'proofread'; title: string; badge: number; cls: string; icon: string }[] = []
+  if (hasComments.value) arr.push({ key: 'comment', title: `展开批注列表（${liveCount.value}）`, badge: liveCount.value, cls: '_comment', icon: ICON.comment })
+  if (hasCompare.value) arr.push({ key: 'compare', title: `展开比对（${compareStore.entryCount}）`, badge: compareStore.entryCount, cls: '_compare', icon: ICON.compare })
+  if (hasProofread.value) arr.push({ key: 'proofread', title: `展开校对结果（${proofreadStore.itemCount}）`, badge: proofreadStore.itemCount, cls: '_proofread', icon: ICON.proofread })
+  return arr
+})
+function openTrigger(key: 'comment' | 'compare' | 'proofread') {
+  compareStore.openTab(key)
+}
+
+// ── 校对：交互 ──
+function jumpProofread(id: string) {
+  emit('jumpProofread', id)
+}
+function replaceProofread(id: string) {
+  emit('replaceProofread', id)
+}
+function ignoreIssue(id: string) {
+  proofreadStore.ignore(id)
+}
+function addAsCorrectWord(original: string) {
+  proofreadStore.addCorrectWord(original)
+}
+const showWords = ref(false)
+const newWord = ref('')
+function removeCorrectWord(w: string) {
+  proofreadStore.removeCorrectWord(w)
+}
+function addNewWord() {
+  const t = newWord.value.trim()
+  if (!t) return
+  proofreadStore.addCorrectWord(t)
+  newWord.value = ''
+}
+
 defineExpose({ open: panelOpen })
 </script>
 
@@ -137,10 +191,11 @@ defineExpose({ open: panelOpen })
     <div class="comment-clip">
       <div class="comment-panel">
         <!-- ── 头部：tab 栏或单标题 ── -->
-        <div class="comment-panel-head" :class="{ 'has-tabs': hasComments && hasCompare }">
-          <!-- 双 tab 栏 -->
-          <template v-if="hasComments && hasCompare">
+        <div class="comment-panel-head" :class="{ 'has-tabs': showTabs }">
+          <!-- 多 tab 栏（批注 / 比对 / 校对 任意两个及以上） -->
+          <template v-if="showTabs">
             <button
+              v-if="hasComments"
               class="panel-tab"
               :class="{ active: activeTab === 'comment' }"
               @click="switchTab('comment')"
@@ -148,11 +203,20 @@ defineExpose({ open: panelOpen })
               📝 批注 ({{ liveCount }})
             </button>
             <button
+              v-if="hasCompare"
               class="panel-tab"
               :class="{ active: activeTab === 'compare' }"
               @click="switchTab('compare')"
             >
               🔍 比对 ({{ compareStore.entryCount }})
+            </button>
+            <button
+              v-if="hasProofread"
+              class="panel-tab"
+              :class="{ active: activeTab === 'proofread' }"
+              @click="switchTab('proofread')"
+            >
+              ✨ 校对 ({{ proofreadStore.itemCount }})
             </button>
             <span class="flex-1" />
             <button class="comment-panel-close" title="关闭" @click="close">✕</button>
@@ -165,8 +229,14 @@ defineExpose({ open: panelOpen })
             <button class="comment-panel-close" title="关闭" @click="close">✕</button>
           </template>
           <!-- 仅有比对 -->
-          <template v-else>
+          <template v-else-if="hasCompare">
             <span class="comment-panel-title">🔍 比对 ({{ compareStore.entryCount }})</span>
+            <span class="flex-1" />
+            <button class="comment-panel-close" title="关闭" @click="close">✕</button>
+          </template>
+          <!-- 仅有校对 -->
+          <template v-else>
+            <span class="comment-panel-title">✨ 校对 ({{ proofreadStore.itemCount }})</span>
             <span class="flex-1" />
             <button class="comment-panel-close" title="关闭" @click="close">✕</button>
           </template>
@@ -231,6 +301,68 @@ defineExpose({ open: panelOpen })
           </div>
         </template>
 
+        <!-- ── 校对内容 ── -->
+        <template v-if="hasProofread">
+          <div v-show="activeTab === 'proofread'" class="proofread-panel-body">
+            <div v-if="proofreadStore.manualRun" class="pf-stat">🔄 校对进行中…</div>
+            <div v-else-if="proofreadStore.manualRun && proofreadStore.error" class="pf-stat pf-error">{{ proofreadStore.error }}</div>
+            <template v-else>
+              <div v-if="proofreadStore.suppressed > 0" class="pf-stat pf-muted">
+                已抑制 {{ proofreadStore.suppressed }} 条正词命中
+              </div>
+              <ol class="comment-list-items">
+                <li
+                  v-for="it in proofreadStore.items"
+                  :key="it.id"
+                  class="comment-list-item"
+                >
+                  <div class="pf-item-top">
+                    <span class="pf-cat">{{ it.category }}</span>
+                    <span class="pf-old">{{ it.original }}</span>
+                    <span class="pf-arrow">→</span>
+                    <span class="pf-new">{{ it.suggestion }}</span>
+                  </div>
+                  <div v-if="it.reason" class="pf-reason">{{ it.reason }}</div>
+                  <div class="comment-list-bottom">
+                    <div class="comment-list-meta">位置 {{ it.from }}</div>
+                    <div class="comment-list-actions">
+                      <button class="comment-list-btn" @click="jumpProofread(it.id)">📍 跳转</button>
+                      <button class="comment-list-btn" @click="replaceProofread(it.id)">✎ 替换</button>
+                      <button class="comment-list-btn" @click="addAsCorrectWord(it.original)" title="标记为正确，抑制此类误报">✓ 正词</button>
+                      <button class="comment-list-btn comment-list-btn-danger" @click="ignoreIssue(it.id)">忽略</button>
+                    </div>
+                  </div>
+                </li>
+              </ol>
+
+              <!-- 正词管理 -->
+              <div class="pf-words">
+                <button class="pf-words-toggle" @click="showWords = !showWords">
+                  {{ showWords ? '▾' : '▸' }} 正词管理 ({{ proofreadStore.correctWords.length }})
+                </button>
+                <div v-if="showWords" class="pf-words-body">
+                  <div class="pf-words-list">
+                    <span v-for="w in proofreadStore.correctWords" :key="w" class="pf-word">
+                      {{ w }}
+                      <button class="pf-word-x" title="删除" @click="removeCorrectWord(w)">✕</button>
+                    </span>
+                    <span v-if="proofreadStore.correctWords.length === 0" class="pf-words-empty">暂无正词</span>
+                  </div>
+                  <div class="pf-words-add">
+                    <input v-model="newWord" placeholder="添加正词…" @keyup.enter="addNewWord" />
+                    <button class="comment-list-btn" @click="addNewWord">添加</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- 校对底部 -->
+            <div class="comment-panel-foot">
+              <button class="comment-clear-btn" @click="proofreadStore.clearAll()">🗑 清空校对结果</button>
+            </div>
+          </div>
+        </template>
+
         <!-- ── 比对内容 ── -->
         <template v-if="hasCompare">
           <div v-show="activeTab === 'compare'" class="compare-panel-body">
@@ -240,35 +372,19 @@ defineExpose({ open: panelOpen })
       </div>
     </div>
 
-    <!-- ── 触发标签（面板关闭时显示） ── -->
+    <!-- ── 触发标签（面板关闭时显示，按存在顺序纵向排列） ── -->
     <template v-if="!panelOpen">
-      <!-- 批注 trigger：有批注才显示 -->
       <button
-        v-if="hasComments"
+        v-for="(tg, idx) in visibleTriggers"
+        :key="tg.key"
         class="panel-trigger"
-        :title="`展开批注列表（${liveCount}）`"
-        @click="compareStore.openTab('comment')"
+        :class="tg.cls"
+        :style="{ top: (20 + idx * 56) + 'px' }"
+        :title="tg.title"
+        @click="openTrigger(tg.key)"
       >
-        <svg class="panel-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M7 8h10M7 12h10M7 16h4" />
-        </svg>
-        <span class="panel-trigger-badge _comment">{{ liveCount }}</span>
-      </button>
-
-      <!-- 比对 trigger：有比对条目才显示 -->
-      <button
-        v-if="hasCompare"
-        class="panel-trigger"
-        :class="{ '_second': hasComments }"
-        :title="`展开比对（${compareStore.entryCount}）`"
-        @click="compareStore.openTab('compare')"
-      >
-        <svg class="panel-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="4" width="8" height="16" rx="1" />
-          <rect x="14" y="4" width="8" height="16" rx="1" />
-          <path d="M10 12h4" />
-        </svg>
-        <span class="panel-trigger-badge _compare">{{ compareStore.entryCount }}</span>
+        <span class="panel-trigger-icon" v-html="tg.icon"></span>
+        <span class="panel-trigger-badge" :class="tg.cls">{{ tg.badge }}</span>
       </button>
     </template>
   </div>
@@ -456,6 +572,9 @@ defineExpose({ open: panelOpen })
 .panel-trigger-badge._compare {
   background: #2563eb;
 }
+.panel-trigger-badge._proofread {
+  background: #ef4444;
+}
 
 /* ═══════════════════════════════════════════════
    比对区域（撑满面板剩余高度）
@@ -466,6 +585,122 @@ defineExpose({ open: panelOpen })
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════
+   校对区域
+   ═══════════════════════════════════════════════ */
+.proofread-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pf-stat {
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #374151;
+}
+.pf-stat.pf-error {
+  color: #dc2626;
+}
+.pf-stat.pf-muted {
+  color: #6b7280;
+}
+.pf-item-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pf-cat {
+  color: #ef4444;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.pf-old {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.pf-arrow {
+  color: #9ca3af;
+}
+.pf-new {
+  color: #059669;
+  font-weight: 600;
+}
+.pf-reason {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.45;
+}
+/* 正词管理 */
+.pf-words {
+  flex-shrink: 0;
+  border-top: 1px solid #e5e7eb;
+  padding: 6px 10px;
+}
+.pf-words-toggle {
+  background: transparent;
+  border: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+}
+.pf-words-body {
+  margin-top: 6px;
+}
+.pf-words-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pf-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px 1px 6px;
+  font-size: 11px;
+  background: rgba(5, 150, 105, 0.1);
+  border: 1px solid rgba(5, 150, 105, 0.25);
+  border-radius: 999px;
+  color: #047857;
+}
+.pf-word-x {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  color: #047857;
+  line-height: 1;
+  padding: 0 1px;
+}
+.pf-word-x:hover {
+  color: #dc2626;
+}
+.pf-words-empty {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.pf-words-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.pf-words-add input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 2px 5px;
+  border: 1px solid #d1d5db;
+  border-radius: 3px;
+  background: #fff;
+  color: inherit;
 }
 
 /* ═══════════════════════════════════════════════
@@ -718,5 +953,49 @@ defineExpose({ open: panelOpen })
 
 .dark .compare-panel-body {
   /* 暗色背景继承 panel */
+}
+
+.dark .pf-stat {
+  color: #e5e7eb;
+}
+.dark .pf-stat.pf-error {
+  color: #fca5a5;
+}
+.dark .pf-stat.pf-muted {
+  color: #94a3b8;
+}
+.dark .pf-cat {
+  color: #f87171;
+}
+.dark .pf-new {
+  color: #34d399;
+}
+.dark .pf-reason {
+  color: #94a3b8;
+}
+.dark .pf-words {
+  border-top-color: #334155;
+}
+.dark .pf-words-toggle {
+  color: #94a3b8;
+}
+.dark .pf-word {
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.3);
+  color: #6ee7b7;
+}
+.dark .pf-word-x {
+  color: #6ee7b7;
+}
+.dark .pf-word-x:hover {
+  color: #fca5a5;
+}
+.dark .pf-words-empty {
+  color: #64748b;
+}
+.dark .pf-words-add input {
+  background: #0f172a;
+  border-color: #475569;
+  color: #e5e7eb;
 }
 </style>

@@ -50,7 +50,7 @@ function nextSessionLabel(): string {
 export const useCompareStore = defineStore('compare', () => {
   // ── 面板状态（与批注面板共用） ──
   const panelOpen = ref(false)
-  const activeTab = ref<'comment' | 'compare'>('comment')
+  const activeTab = ref<'comment' | 'compare' | 'proofread'>('comment')
 
   // ── 当前比对（内存，不持久化） ──
   const entries = ref<CompareEntry[]>([])
@@ -285,7 +285,7 @@ export const useCompareStore = defineStore('compare', () => {
     rightId.value = id
   }
 
-  function openTab(tab: 'comment' | 'compare') {
+  function openTab(tab: 'comment' | 'compare' | 'proofread') {
     if (panelOpen.value && activeTab.value === tab) {
       panelOpen.value = false
     } else {

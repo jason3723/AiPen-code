@@ -1,5 +1,30 @@
 # AiPen 更新日志
 
+## v4.2.3 (2026-07-12)
+
+### ✨ 新增
+
+- **实时校对（Proofread）功能**：手动触发、只标不改，需用户确认后才替换，避免误改正文。
+  - **后端 `proofread` 命令**（`ai.rs`）：将纯文本交给全局 AI 模型做零样本校对，返回 `{category, original, suggestion, reason}` 列表，以字符偏移定位；解析做了容错（剥离 ```json 围栏、截取首个 `[...]`、失败降级为空），不卡死流程。
+  - **编辑器内红色波浪线标注**（`RichEditor.vue` 的 `proofreadPlugin`）：对疑似问题文本画波浪线，hover 浮层显示「建议」与「原因」；编辑命中问题区间自动移除标注，其余项随改动实时重映射。
+  - **工具栏「校对」图标**：无选区校对全文、有选区只校对选区；校对进行中 / 面板打开时按钮高亮。
+  - **校对面板集成进统一抽屉**（`CommentListPanel.vue`）：每条结果支持「📍跳转 / ✎替换 / ✓标记为正词 / 忽略」；切换文档自动清空结果（正词为全局设置，保留）。
+  - **正词管理器**（全局、`localStorage` 持久化 `aipen_proofread_correct_words`）：添加后实时抑制命中该词的误报，支持增 / 删 / 改。
+  - **偏移量 ↔ 文档位置映射工具**（`src/utils/docOffset.ts`）：序列化与定位共用同一套分隔规则（块级之间单 `\n`），字符级计数与 Rust 端 `text.chars().count()` 一致，保证波浪线精确落到正确位置（中文不错位）。
+
+### 📝 变更
+
+- 删除旧实验性规则引擎文档 `docs/PROOFREAD_RULE_ENGINE.md`：校对结果改为直接由 AI 零样本生成，不再依赖本地规则库。
+
+### 🐛 修复
+
+- **修复全屏/沉浸模式下左右面板折叠后无法复原**：浏览器是 OS 级 WebView2 窗口，DOM 的 `z-index` 无法压在其之上。原视口左右铺满中央区域，折叠按钮挪到窗口边缘后被浏览器盖住。`getBrowserViewportRect()` 在左右各预留 24px 的 `gutter`，按钮始终落在浏览器范围之外、可见且可点。
+- **修复打开网页后，教程/反馈/排版设置弹窗被网页遮住看不到**：这些弹窗虽为 `Teleport` 到 body 的高 `z-index` DOM，但仍被 OS 级浏览器窗口盖住。现新增 `browserOverlayOpen` 监听，弹窗（教程/反馈/排版设置/关于）打开时 `hide_browser()` 临时隐藏浏览器，关闭后按当前 `leftSubTab` 状态重定位并 `show_browser()`（网页状态保留不销毁）。
+- **修复右键面板「刷新」后网页残留顶端、不随刷新销毁**：原 `handleReload` 直接 `location.reload()` 只重载主窗口前端，Rust 创建的独立 WebView2 窗口未被销毁，变成孤儿窗口残留顶层。现先 `close_browser()` 显式销毁再重载，残留消失。
+- **修复左右面板折叠/展开后浏览器视口不跟随、两端留白或面板被网页盖住**：原 `repositionBrowser` 仅监听 window `resize`/`focus`/`scale`，面板 200ms 折叠过渡期间不触发。现新增 `ResizeObserver` 直接观察中央区域 `mainAreaRef`，面板展开/折叠全过程同步重定位浏览器；卸载时 `disconnect()` 清理。
+
+---
+
 ## v4.2.2 (2026-07-10)
 
 ### 🐛 修复

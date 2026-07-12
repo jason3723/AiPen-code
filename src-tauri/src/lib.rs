@@ -183,6 +183,19 @@ pub fn run() {
                 });
             });
 
+            // 彻底消除窗口缩放闪屏：禁用 DWM 过渡动画 + 设置背景色兜底
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(main_win) = app.get_webview_window("main") {
+                    commands::disable_dwm_transitions(&main_win);
+                    // 初始背景色：浅色（主题切换时由 set_browser_theme 同步为对应色）
+                    commands::set_webview_bg(
+                        &main_win,
+                        tauri::window::Color(248, 249, 250, 255), // #f8f9fa
+                    );
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -206,6 +219,7 @@ pub fn run() {
             commands::delete_version,
             commands::get_diff,
             commands::analyze_revision,
+            commands::proofread,
             commands::get_analysis,
             commands::get_api_config,
             commands::set_api_config,

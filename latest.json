@@ -1,11 +1,11 @@
 {
-  "notes": "🐛 修复\n\n- 修复新版本使用手册（教程文档）打开后内容空白：4.2.1 引入的新版 tutorial.md 含大量列表，但编辑器 schema 未注册列表节点，导致 setContent 抛错并重置为空文档（只剩标题）。已恢复列表节点支持，教程与含列表的用户文档均可正常渲染。\n\n📝 变更\n\n- 列表节点仅在 schema 层注册用于渲染，关闭其输入规则（敲 - 或 1. 不再自动转列表），工具栏不显示列表按钮。",
+  "version": "4.2.3",
+  "notes": "### ✨ 新增\n\n- **实时校对（Proofread）功能**：手动触发、只标不改，需用户确认后才替换，避免误改正文。\n  - **后端 `proofread` 命令**（`ai.rs`）：将纯文本交给全局 AI 模型做零样本校对，返回 `{category, original, suggestion, reason}` 列表，以字符偏移定位；解析做了容错（剥离 ```json 围栏、截取首个 `[...]`、失败降级为空），不卡死流程。\n  - **编辑器内红色波浪线标注**（`RichEditor.vue` 的 `proofreadPlugin`）：对疑似问题文本画波浪线，hover 浮层显示「建议」与「原因」；编辑命中问题区间自动移除标注，其余项随改动实时重映射。\n  - **工具栏「校对」图标**：无选区校对全文、有选区只校对选区；校对进行中 / 面板打开时按钮高亮。\n  - **校对面板集成进统一抽屉**（`CommentListPanel.vue`）：每条结果支持「📍跳转 / ✎替换 / ✓标记为正词 / 忽略」；切换文档自动清空结果（正词为全局设置，保留）。\n  - **正词管理器**（全局、`localStorage` 持久化 `aipen_proofread_correct_words`）：添加后实时抑制命中该词的误报，支持增 / 删 / 改。\n  - **偏移量 ↔ 文档位置映射工具**（`src/utils/docOffset.ts`）：序列化与定位共用同一套分隔规则（块级之间单 `\\n`），字符级计数与 Rust 端 `text.chars().count()` 一致，保证波浪线精确落到正确位置（中文不错位）。\n\n### 📝 变更\n\n- 删除旧实验性规则引擎文档 `docs/PROOFREAD_RULE_ENGINE.md`：校对结果改为直接由 AI 零样本生成，不再依赖本地规则库。\n\n### 🐛 修复\n\n- **修复全屏/沉浸模式下左右面板折叠后无法复原**：浏览器是 OS 级 WebView2 窗口，DOM 的 `z-index` 无法压在其之上。原视口左右铺满中央区域，折叠按钮挪到窗口边缘后被浏览器盖住。`getBrowserViewportRect()` 在左右各预留 24px 的 `gutter`，按钮始终落在浏览器范围之外、可见且可点。\n- **修复打开网页后，教程/反馈/排版设置弹窗被网页遮住看不到**：这些弹窗虽为 `Teleport` 到 body 的高 `z-index` DOM，但仍被 OS 级浏览器窗口盖住。现新增 `browserOverlayOpen` 监听，弹窗（教程/反馈/排版设置/关于）打开时 `hide_browser()` 临时隐藏浏览器，关闭后按当前 `leftSubTab` 状态重定位并 `show_browser()`（网页状态保留不销毁）。\n- **修复右键面板「刷新」后网页残留顶端、不随刷新销毁**：原 `handleReload` 直接 `location.reload()` 只重载主窗口前端，Rust 创建的独立 WebView2 窗口未被销毁，变成孤儿窗口残留顶层。现先 `close_browser()` 显式销毁再重载，残留消失。\n- **修复左右面板折叠/展开后浏览器视口不跟随、两端留白或面板被网页盖住**：原 `repositionBrowser` 仅监听 window `resize`/`focus`/`scale`，面板 200ms 折叠过渡期间不触发。现新增 `ResizeObserver` 直接观察中央区域 `mainAreaRef`，面板展开/折叠全过程同步重定位浏览器；卸载时 `disconnect()` 清理。",
+  "pub_date": "2026-07-12T09:17:08Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkVCbitSWEZ2ZlJnY1dMaTFRL0cxMDJNZnNZUndHQnpVUXJId0ZLeG9GMW9wc2lodTR0N0oxa1g2UHdienkyN2dMMHNMd0h2WFRaTHNqNVFtUzdUa1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNjkyNTgyCWZpbGU6QWlQZW5fNC4yLjJfeDY0LXNldHVwLmV4ZQpXQ0NZa0x4WEg3d0FNdW9QSjQ2QWQzNWhYTmkwcG54bTFkSzN0UG1sSitLNE9vR0V3Snd6dnlGT3BMSWNKdTUyQ2h4cDRUWENaNFVmQjhGY1FVbWxDdz09Cg==",
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.2_x64-setup.exe"
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.3_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk5EWkhGWG1ETldOUTMvQndWY0Vsbmwra2lyZFA4NitkZmVmTVV5Z1hOU1N0TU80clZhZGV5ckFpejMwQ2xyYXFXZEU5c09YaFI3enFrMTZOOUJsNXdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzODQ3ODA4CWZpbGU6QWlQZW5fNC4yLjNfeDY0LXNldHVwLmV4ZQpaUTB0Mmt2SGxlYkR6UkpVZUprRjh2elp6dnRORStBajJyWFg5ZkN6L1AyYzgrUDhwRzByd05lNW1ub0FlanI4VSthVUd0c3dQV2RhaWNqeGE2MW1EQT09Cg=="
     }
-  },
-  "pub_date": "2026-07-10T14:12:31Z",
-  "version": "4.2.2"
+  }
 }

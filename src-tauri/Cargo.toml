@@ -1,6 +1,6 @@
 [package]
 name = "aipen"
-version = "4.2.2"
+version = "4.2.3"
 description = "AiPen — AI 辅助文档写作"
 authors = ["you"]
 edition = "2021"
@@ -39,5 +39,6 @@ jieba-rs = "0.7"
 raw-window-handle = "0.6"
 windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
     "Win32_Foundation",
 ] }

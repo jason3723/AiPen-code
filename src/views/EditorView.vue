@@ -98,13 +98,6 @@ const titleInput = ref("");
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(false);
 
-// ── 全屏过渡遮罩 ──
-const overlayVisible = ref(false);
-const overlayText = ref("");
-
-// ── 窗口缩放中标记：阻止 resize/focus 事件干扰过渡动画 ──
-const isResizing = ref(false);
-
 // ── 侧栏右键菜单 ──
 const ctxMenu = ref<{ show: boolean; x: number; y: number; type: 'system' | 'text'; selectedText?: string }>({ show: false, x: 0, y: 0, type: 'system' });
 
@@ -186,6 +179,11 @@ function handleSidebarAddToCompare() {
 }
 function handleReload() {
   ctxMenu.value.show = false;
+  // 浏览器是 Rust 创建的独立 OS 级 WebView2 窗口，location.reload() 只重载主窗口前端，
+  // 不销毁它 → 会留下孤儿窗口（置于顶端、刷新后不消失）。先显式关闭再重载。
+  invoke("close_browser").catch(() => {});
+  browserOpen.value = false;
+  browserManuallyHidden.value = false;
   location.reload();
 }
 
@@ -541,10 +539,14 @@ function getBrowserViewportRect(): { x: number; y: number; width: number; height
   if (!el) return null;
   const rect = el.getBoundingClientRect();
   const barHeight = bar ? bar.getBoundingClientRect().height : 0;
+  // 浏览器是 OS 级 WebView2 窗口，DOM 的 z-index 无法压在其上层。
+  // 折叠按钮（左右侧栏）位于中央区域左右边缘，故在左右各预留一条 gutter，
+  // 让按钮始终落在浏览器窗口范围之外、保持可见且可点击（全屏折叠后面板无法复原的根因）。
+  const gutter = 24;
   return {
-    x: rect.left,
+    x: rect.left + gutter,
     y: rect.top + barHeight,
-    width: rect.width,
+    width: Math.max(0, rect.width - gutter * 2),
     height: Math.max(0, rect.height - barHeight),
   };
 }
@@ -555,6 +557,8 @@ async function handleOpenBrowser(url: string) {
   // 同步左侧栏状态：地址栏/素材面板打开浏览器时，也必须把 leftSubTab 设为 'browser'，
   // 否则切到文档/素材面板时 leftSubTab 未变化、隐藏浏览器的 watch 不触发，网页会一直置顶。
   leftSubTab.value = 'browser';
+  // 等 DOM 更新（地址栏元素挂载）后再计算视口，否则 barHeight=0 会让 webview 盖住地址栏
+  await nextTick();
   try {
     if (browserOpen.value) {
       // 浏览器已存在（可能处于隐藏状态），先恢复显示并重定位
@@ -635,6 +639,8 @@ watch(leftSubTab, async (tab) => {
       await invoke("hide_browser");
     } else {
       // 切回浏览器 tab，先 resize 再 show（窗口可能变过大小/位置）
+      // 必须等 nextTick，DOM 更新后地址栏元素才挂载，否则 barHeight=0，webview 盖住地址栏
+      await nextTick();
       const vp = getBrowserViewportRect();
       if (vp) {
         await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
@@ -644,23 +650,26 @@ watch(leftSubTab, async (tab) => {
   } catch { /* 忽略 */ }
 });
 
-// 主题变化 → 同步浏览器 webview 主题
+// 主题变化 → 同步浏览器 webview 主题 + 主窗口背景色（消除 resize 闪屏）
 watch(isDark, async (dark) => {
-  if (browserOpen.value) {
-    invoke("set_browser_theme", { dark }).catch(() => {});
-  }
-});
+  invoke("set_browser_theme", { dark }).catch(() => {});
+}, { immediate: true });
 
-// 浏览器打开时，窗口大小变化 → 重新定位 webview（节流 + 缩放中跳过）
+// 浏览器打开时，窗口大小变化 → 重定位 webview
+function repositionBrowser() {
+  if (!browserOpen.value) return;
+  const vp = getBrowserViewportRect();
+  if (!vp) return;
+  invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
+}
+
+// 防抖版：拖拽缩放等高频事件复用
 let _browserResizeTimer: ReturnType<typeof setTimeout> | null = null;
 function onBrowserResize() {
-  if (!browserOpen.value || isResizing.value) return;
   if (_browserResizeTimer) return; // 已经在队列中，跳过
   _browserResizeTimer = setTimeout(() => {
     _browserResizeTimer = null;
-    const vp = getBrowserViewportRect();
-    if (!vp) return;
-    invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
+    repositionBrowser();
   }, 150);
 }
 
@@ -846,7 +855,7 @@ function scrollEditor() {
 }
 
 // ── 串行化 diff_playback 避免并发竞态 ──
-let diffPlaybackQueue: Promise<void> = Promise.resolve()
+let diffPlaybackQueue: Promise<unknown> = Promise.resolve()
 
 function handleStream(
   payload:
@@ -1027,6 +1036,29 @@ const showExportSettings = ref(false);
 const showTutorial = ref(false);
 const showFeedback = ref(false);
 
+// 全屏/置顶弹窗打开时，浏览器是 OS 级 WebView2 窗口，恒在 DOM 之上，
+// 会盖住这些高 z-index 弹窗（教程/反馈/排版设置/关于）。故打开时隐藏浏览器，
+// 关闭后按当前可见状态恢复（保留网页自身状态，不销毁）。
+const browserOverlayOpen = computed(
+  () => showTutorial.value || showFeedback.value || showExportSettings.value || showAbout.value
+);
+watch(browserOverlayOpen, async (open) => {
+  if (!browserOpen.value) return;
+  try {
+    if (open) {
+      await invoke("hide_browser");
+    } else if (leftSubTab.value === 'browser' && !browserManuallyHidden.value) {
+      const vp = getBrowserViewportRect();
+      if (vp) {
+        await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
+      }
+      await invoke("show_browser");
+    } else {
+      await invoke("hide_browser");
+    }
+  } catch { /* 忽略 */ }
+});
+
 // ── 窗口关闭拦截 ──
 let closeRequestUnlisten: (() => void) | null = null;
 let browserClipUnlisten: (() => void) | null = null;
@@ -1034,6 +1066,7 @@ let browserChatUnlisten: (() => void) | null = null;
 let focusUnlisten: (() => void) | null = null;
 let movedUnlisten: (() => void) | null = null;
 let scaleChangedUnlisten: (() => void) | null = null;
+let browserResizeObserver: ResizeObserver | null = null;
 
 onMounted(async () => {
   const win = getCurrentWindow();
@@ -1081,6 +1114,12 @@ onMounted(async () => {
     // 窗口 resize 时重定位浏览器 webview
     window.addEventListener("resize", onBrowserResize);
 
+    // 中央区域尺寸变化 → 浏览器视口同步跟随（左右侧栏折叠/展开、布局变化等）。
+    // 仅监听 window.resize 会在面板 200ms 过渡动画期间错过重定位，
+    // 故直接观察 mainArea 元素，过渡全过程都会被捕获（防抖在 onBrowserResize 内）。
+    browserResizeObserver = new ResizeObserver(() => { onBrowserResize(); });
+    if (mainAreaRef.value) browserResizeObserver.observe(mainAreaRef.value);
+
     // 窗口移动时也重定位浏览器 webview（与 resize 共用同一个处理函数）
     movedUnlisten = await win.onMoved(() => {
       onBrowserResize();
@@ -1096,8 +1135,6 @@ onMounted(async () => {
     //   - 主窗口获焦 + browser tab 激活 → resize + show（从最小化恢复时）
     //   - 失焦时不再需要手动 hide——owned window 自动跟随 owner 隐藏
     focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
-      // 缩放过渡期间跳过，防止 show_browser / hide_browser 引发额外闪烁
-      if (isResizing.value) return;
       if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
         try {
           if (focused) {
@@ -1131,6 +1168,7 @@ onBeforeUnmount(() => {
   focusUnlisten?.();
   movedUnlisten?.();
   scaleChangedUnlisten?.();
+  browserResizeObserver?.disconnect();
   window.removeEventListener("resize", onBrowserResize);
   delete (window as any).__aipenReceiveClip;
   delete (window as any).__aipenReceiveChat;
@@ -1142,6 +1180,24 @@ function handleCommit() {
 }
 
 // ── 窗口控制 ──
+// 切换期间隐藏内容、只显示应用色背景，彻底消除闪屏（见 .resizing CSS）
+const resizing = ref(false);
+const raf = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+// 等待窗口尺寸真正稳定（resized 事件，带兜底超时），用于恢复内容显示的时机
+function waitWindowResized(): Promise<void> {
+  const win = getCurrentWindow();
+  return new Promise((resolve) => {
+    let unlisten: (() => void) | null = null;
+    const finish = () => {
+      if (unlisten) unlisten();
+      resolve();
+    };
+    win.onResized(() => finish()).then((u) => { unlisten = u; });
+    setTimeout(finish, 400);
+  });
+}
+
 async function handleMinimize() {
   // owned window 自动跟随主窗口最小化，无需手动 hide_browser
   await getCurrentWindow().minimize();
@@ -1150,80 +1206,60 @@ async function handleMaximize() {
   const win = getCurrentWindow();
   const isMax = await win.isMaximized();
 
-  // 标记缩放中，防止 resize/focus 事件干扰
-  isResizing.value = true;
-  overlayText.value = isMax ? "还原窗口" : "最大化窗口";
-  overlayVisible.value = true;
+  // 切换前先隐藏内容，期间屏幕只有根容器应用色背景，盖住一切闪屏源
+  resizing.value = true;
   await nextTick();
-  // ★ 必须等 2 帧确保 overlay 被浏览器实际绘制，窗口变化时才不会有闪屏
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
+  await raf();
 
+  // 提前注册尺寸稳定监听（窗口操作前启动注册，确保捕获 resized 事件）
+  const resizedDone = waitWindowResized();
   if (isMax) {
     await win.unmaximize();
   } else {
     await win.maximize();
   }
 
-  // 等窗口稳定
-  await sleep(400);
-
-  // ★ 先解除 contain 让编辑器在遮罩下重排，等几帧渲染稳定后再撤掉遮罩
-  isResizing.value = false;
-  await nextTick();
-  // 强制同步回流确保布局就绪
-  void document.documentElement.offsetHeight;
-  // 等 3 帧：布局 → 绘制 → 合成器提交
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-
-  overlayVisible.value = false;
-  // 最大化/全屏后主区域尺寸已变，主动让浏览器 webview 重新跟随
-  if (browserOpen.value) onBrowserResize();
+  // 等窗口尺寸稳定、WebView2 重绘完成后再恢复内容
+  await resizedDone;
+  await sleep(30);
+  resizing.value = false;
+  repositionBrowser();
 }
 
 async function handleToggleFullscreen() {
   const win = getCurrentWindow();
   const isFullscreen = await win.isMaximized();
 
-  isResizing.value = true;
-  overlayText.value = isFullscreen ? "退出沉浸模式" : "进入沉浸模式";
-  overlayVisible.value = true;
+  // 切换前先隐藏内容
+  resizing.value = true;
   await nextTick();
-  // ★ 必须等 2 帧确保 overlay 被绘制
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
+  await raf();
 
+  // 提前注册尺寸稳定监听（窗口操作前启动注册，确保捕获 resized 事件）
+  const resizedDone = waitWindowResized();
   if (isFullscreen) {
-    await win.unmaximize();
-    await sleep(200);
     leftCollapsed.value = false;
     rightCollapsed.value = false;
+    await nextTick();
+    await win.unmaximize();
   } else {
     leftCollapsed.value = true;
     rightCollapsed.value = true;
-    await sleep(250);
+    await nextTick();
     await win.maximize();
   }
 
-  // 等面板展开/折叠 + 窗口稳定
-  await sleep(400);
-
-  // ★ 先解除 contain 让编辑器在遮罩下重排，等几帧渲染稳定后再撤掉遮罩
-  isResizing.value = false;
-  await nextTick();
-  void document.documentElement.offsetHeight;
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-
-  overlayVisible.value = false;
+  // 等窗口尺寸稳定、WebView2 重绘完成后再恢复内容
+  await resizedDone;
+  await sleep(30);
+  resizing.value = false;
+  repositionBrowser();
 }
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
 async function tryExit() {
   // 后台启动保存（不等待），让确认对话框即时弹出
   let savePromise: Promise<unknown> = Promise.resolve();
@@ -1399,7 +1435,7 @@ async function handleExportWord() {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+  <div class="h-screen flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100" :class="{ resizing }">
     <!-- 工具栏 -->
     <header
       data-tauri-drag-region
@@ -1792,7 +1828,7 @@ async function handleExportWord() {
       </aside>
 
       <!-- 中间：编辑器 + 写作进度条 -->
-      <main ref="mainAreaRef" class="flex-1 min-w-0 min-h-0 flex flex-col" :class="{ 'editor-contained': isResizing }">
+      <main ref="mainAreaRef" class="flex-1 min-w-0 min-h-0 flex flex-col">
         <!-- 写作进度条（生成/审查/润色阶段） -->
         <div
           v-if="composeActive && isWritingPhase"
@@ -1967,7 +2003,7 @@ async function handleExportWord() {
       <!-- 右侧悬浮折叠按钮 -->
       <button
         v-show="!rightCollapsed"
-        class="absolute right-[19.95rem] top-1/2 -translate-y-1/2 translate-x-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        class="absolute right-[19.95rem] top-1/2 -translate-y-1/2 translate-x-1/2 z-[110] w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
         title="折叠工具面板"
         @click="rightCollapsed = true"
       >
@@ -1975,7 +2011,7 @@ async function handleExportWord() {
       </button>
       <button
         v-show="rightCollapsed"
-        class="absolute right-0.5 top-1/2 -translate-y-1/2 z-10 w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
+        class="absolute right-0.5 top-1/2 -translate-y-1/2 z-[110] w-5 h-5 rounded-full bg-white/70 dark:bg-gray-800/70 border border-gray-200/60 dark:border-gray-700/60 shadow-sm hover:shadow hover:bg-white dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600 flex items-center justify-center cursor-pointer"
         title="展开工具面板"
         @click="rightCollapsed = false"
       >
@@ -2630,27 +2666,6 @@ async function handleExportWord() {
       </div>
     </Teleport>
 
-    <!-- 全屏过渡遮罩 -->
-    <Teleport to="body">
-      <Transition name="overlay-fade">
-        <div
-          v-if="overlayVisible"
-          class="fullscreen-overlay"
-          :class="{ 'fullscreen-overlay--dark': isDark }"
-        >
-          <div class="flex flex-col items-center gap-4">
-            <!-- 品牌标识动画 -->
-            <div class="fullscreen-overlay-title">AiPen</div>
-            <!-- 状态文字 -->
-            <div class="fullscreen-overlay-text">{{ overlayText }}</div>
-            <!-- 进度小点 -->
-            <div class="fullscreen-overlay-dots">
-              <span></span><span></span><span></span>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 
@@ -2680,69 +2695,14 @@ async function handleExportWord() {
   animation: marquee-sq 1.2s ease-in-out infinite;
 }
 
-/* 全屏过渡遮罩 */
-.fullscreen-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f8f9fa;
-  color: #374151;
-}
-.fullscreen-overlay--dark {
-  background: #1e1f2b;
-  color: #9ca3af;
-}
-.fullscreen-overlay-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #3b82f6;
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.fullscreen-overlay--dark .fullscreen-overlay-title {
-  color: #60a5fa;
-}
-.fullscreen-overlay-text {
-  font-size: 0.875rem;
-  color: inherit;
-}
-.fullscreen-overlay-dots {
-  display: flex;
-  gap: 0.375rem;
-}
-.fullscreen-overlay-dots span {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #3b82f6;
-  animation: bounce 1s ease-in-out infinite;
-}
-.fullscreen-overlay--dark .fullscreen-overlay-dots span {
-  background: #60a5fa;
-}
-.fullscreen-overlay-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.fullscreen-overlay-dots span:nth-child(3) {
-  animation-delay: 0.3s;
+/* 窗口最大化/全屏切换期间：隐藏内容、只保留根容器应用色背景。
+   这样切换过程中屏幕只有纯应用色（不依赖 WebView2 控件背景），
+   彻底盖住 DWM 动画残留与 WebView2 重绘的那 1 帧旧内容/空白闪。
+   visibility 不触发重排，恢复时内容以新尺寸无缝出现。 */
+.resizing > * {
+  visibility: hidden;
 }
 
-.overlay-fade-enter-active {
-  transition: opacity 0.12s ease-out;
-}
-.overlay-fade-leave-active {
-  transition: opacity 0.25s ease-in;
-}
-.overlay-fade-enter-from,
-.overlay-fade-leave-to {
-  opacity: 0;
-}
 
-/* 编辑器布局隔离：窗口缩放期间冻结编辑器内部重排，消除 ProseMirror 中间宽度渲染 */
-.editor-contained {
-  contain: layout style;
-}
+
 </style>

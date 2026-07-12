@@ -35,6 +35,8 @@ import { useDocumentStore } from '../stores/document'
 import { useMaterialStore } from '../stores/materialStore'
 import { useCandidateStore } from '../stores/candidateStore'
 import { useCompareStore } from '../stores/compareStore'
+import { useProofreadStore } from '../stores/proofreadStore'
+import type { ProofreadIssue } from '../stores/proofreadStore'
 import { useExportSettingsStore } from '../stores/exportSettings'
 import { textToDocJson } from '../utils/textToDocJson'
 
@@ -334,6 +336,7 @@ const docStore = useDocumentStore()
 const materialStore = useMaterialStore()
 const candidateStore = useCandidateStore()
 const compareStore = useCompareStore()
+const proofreadStore = useProofreadStore()
 const exportSettingsStore = useExportSettingsStore()
 
 // ── 排版设置联动：字号与行间距 ──
@@ -432,6 +435,16 @@ const fontFamily = computed(() => {
 function setFontFamily(f: string) {
   editor.value?.chain().focus().setFontFamily(f).run()
 }
+/** 工具栏字体按钮显示用的标签：当前字体若不在可选列表内（如粘贴网页带进的系统字体栈），
+ *  不再把原始字体栈当文本平铺，而是显示占位，避免窄按钮内换行成"乱码"。 */
+const fontFamilyLabel = computed(() => {
+  const raw = fontFamily.value
+  if (!raw) return '字体'
+  const trimmed = raw.trim()
+  if (fontOptions.includes(trimmed)) return trimmed
+  const matched = fontOptions.find((f) => trimmed.includes(f))
+  return matched ?? '其他字体'
+})
 
 // ── 字号（中文公文号数制，选区级别） ──
 // ★ 对齐导出设置面板 fontSizeOptions，统一使用标准 pt 值
@@ -649,6 +662,30 @@ const SearchHighlightExt = Extension.create({
         init() { return DecorationSet.empty },
         apply(tr, old) {
           const meta = tr.getMeta(searchPluginKey)
+          if (meta !== undefined) return meta
+          if (tr.docChanged) return old.map(tr.mapping, tr.doc)
+          return old
+        },
+      },
+      props: {
+        decorations(state) { return this.getState(state) },
+      },
+    })]
+  },
+})
+
+// ── 校对波浪线 ProseMirror Plugin ──
+const proofreadPluginKey = new PluginKey('proofreadHighlight')
+
+const ProofreadExt = Extension.create({
+  name: 'proofreadHighlight',
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      key: proofreadPluginKey,
+      state: {
+        init() { return DecorationSet.empty },
+        apply(tr, old) {
+          const meta = tr.getMeta(proofreadPluginKey)
           if (meta !== undefined) return meta
           if (tr.docChanged) return old.map(tr.mapping, tr.doc)
           return old
@@ -1028,6 +1065,62 @@ Vue.watch(
   { deep: true },
 )
 
+// ── 校对：波浪线装饰 + 重映射 + 编辑即删 ──
+const proofreadActive = computed(() =>
+  proofreadStore.loading || (compareStore.panelOpen && compareStore.activeTab === 'proofread'),
+)
+
+/** 根据当前 store.items 重建波浪线装饰（from/to 为绝对文档位置） */
+function rebuildProofreadDecorations() {
+  const ed = editor.value
+  if (!ed) return
+  const decos = proofreadStore.items.length > 0
+    ? DecorationSet.create(
+        ed.state.doc,
+        proofreadStore.items.map((i) =>
+          Decoration.inline(i.from, i.to, {
+            class: 'proofread-underline',
+            'data-proofread-id': i.id,
+          }),
+        ),
+      )
+    : DecorationSet.empty
+  ed.view.dispatch(ed.state.tr.setMeta(proofreadPluginKey, decos))
+}
+
+/** items 变化即重建装饰（忽略/替换/清空调正词/重映射都会触发） */
+Vue.watch(
+  () => proofreadStore.items,
+  () => rebuildProofreadDecorations(),
+)
+
+/** 工具栏触发：无选区→全文，有选区→选区 */
+function runProofreadAction() {
+  const ed = editor.value
+  if (!ed) return
+  const { from, to, empty } = ed.state.selection
+  if (empty) {
+    proofreadStore.runProofread(ed.state.doc)
+  } else {
+    proofreadStore.runProofread(ed.state.doc, from, to)
+  }
+}
+
+// ── 校对 hover 浮层 ──
+const proofreadTip = ref<{ show: boolean; x: number; y: number; issue: ProofreadIssue | null }>({
+  show: false, x: 0, y: 0, issue: null,
+})
+let _pfTipTimer: ReturnType<typeof setTimeout> | null = null
+function showProofreadTip(issue: ProofreadIssue, el: HTMLElement) {
+  if (_pfTipTimer) clearTimeout(_pfTipTimer)
+  const r = el.getBoundingClientRect()
+  proofreadTip.value = { show: true, x: r.left, y: r.bottom + 6, issue }
+}
+function scheduleHideProofreadTip() {
+  if (_pfTipTimer) clearTimeout(_pfTipTimer)
+  _pfTipTimer = setTimeout(() => { proofreadTip.value.show = false }, 220)
+}
+
 function closeAllPickers() {
   headingDropdownOpen.value = false
   fontDropdownOpen.value = false
@@ -1191,6 +1284,7 @@ const editor = useEditor({
     FontSize,
     Typography,
     SearchHighlightExt,
+    ProofreadExt,
     DiffHighlight,
     CommentMark,
     CommentBadgeExt,
@@ -1201,8 +1295,22 @@ const editor = useEditor({
       initialized = true
     })
   },
-  onUpdate() {
+  onUpdate({ transaction }) {
     editorStateTick.value++
+    // ── 校对：文档变更后重映射位置，编辑命中错误区间则删除该项 ──
+    if (transaction.docChanged && proofreadStore.items.length > 0) {
+      const ranges: [number, number][] = []
+      transaction.mapping.maps.forEach((m: any) => {
+        m.forEach((from: number, to: number) => ranges.push([from, to]))
+      })
+      if (ranges.length) {
+        const hit = proofreadStore.items.filter((it) =>
+          ranges.some(([cf, ct]) => it.from < ct && cf < it.to),
+        )
+        hit.forEach((it) => proofreadStore.ignore(it.id))
+      }
+      proofreadStore.remap(transaction.mapping)
+    }
     // IME 组合输入期间跳过：避免中途 emit 破坏输入法 composition 状态
     if (isComposing) return
     extractHeadings(editor.value)
@@ -1407,22 +1515,29 @@ const editor = useEditor({
         const t = event.target as HTMLElement | null
         if (!t) return
         const el = t.closest('.comment-mark, .comment-badge') as HTMLElement | null
-        if (!el) {
-          // 不在批注元素上 → 安排延迟关闭（不阻止其他逻辑）
-          tooltipRef.value?.scheduleHide()
+        if (el) {
+          const id = el.getAttribute('data-comment-id')
+          if (id && id !== '0') tooltipRef.value?.show(id, el)
           return
         }
-        const id = el.getAttribute('data-comment-id')
-        if (!id || id === '0') return
-        tooltipRef.value?.show(id, el)
+        const pEl = t.closest('.proofread-underline') as HTMLElement | null
+        if (pEl) {
+          const pid = pEl.getAttribute('data-proofread-id')
+          const issue = pid ? (proofreadStore.items.find((i) => i.id === pid) ?? null) : null
+          if (issue) showProofreadTip(issue, pEl)
+          return
+        }
+        // 不在批注/校对元素上 → 安排延迟关闭
+        tooltipRef.value?.scheduleHide()
+        scheduleHideProofreadTip()
       },
       mouseout: (_view, event) => {
         const t = event.target as HTMLElement | null
         if (!t) return
-        const el = t.closest('.comment-mark, .comment-badge') as HTMLElement | null
-        if (!el) return
-        // 离开批注元素本身时延迟关闭（浮层自身的 mouseenter 会取消）
-        tooltipRef.value?.scheduleHide()
+        const cEl = t.closest('.comment-mark, .comment-badge') as HTMLElement | null
+        if (cEl) { tooltipRef.value?.scheduleHide(); return }
+        const pEl = t.closest('.proofread-underline') as HTMLElement | null
+        if (pEl) { scheduleHideProofreadTip(); return }
       },
       paste: (_view, event) => {
         const items = event.clipboardData?.items
@@ -1503,6 +1618,11 @@ watch(
 // ── 监听 readonly ──
 watch(() => props.readonly, (v) => {
   editor.value?.setEditable(!v)
+})
+
+// ── 切换文档：清空校对结果（正词为全局，不清） ──
+watch(() => docStore.currentDocId, (id) => {
+  if (id) proofreadStore.initDoc(id)
 })
 
 // ── 教程文档自动展开大纲 ──
@@ -1721,6 +1841,40 @@ function onCommentListJump(commentId: string) {
     const dom = ed.view.nodeDOM(targetPos!) as HTMLElement | null
     dom?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   })
+}
+
+/** 校对结果跳转：定位到该问题区间并滚动到可视区 */
+function onProofreadJump(id: string) {
+  const ed = editor.value
+  if (!ed) return
+  const it = proofreadStore.items.find((i) => i.id === id)
+  if (!it) return
+  ed.commands.focus()
+  try {
+    ed.commands.setTextSelection({ from: it.from, to: it.to })
+  } catch {
+    return
+  }
+  nextTick(() => {
+    try {
+      const dom = ed.view.domAtPos(it.from)
+      const el = (dom.node.nodeType === 3 ? dom.node.parentElement : dom.node) as HTMLElement | null
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } catch { /* DOM 已卸载 */ }
+  })
+}
+
+/** 校对结果替换：用建议文本替换问题区间（docChanged 后编辑即删会自动移除该项） */
+function onProofreadReplace(id: string) {
+  const ed = editor.value
+  if (!ed) return
+  const it = proofreadStore.items.find((i) => i.id === id)
+  if (!it) return
+  ed.chain()
+    .focus()
+    .setTextSelection({ from: it.from, to: it.to })
+    .insertContent(it.suggestion)
+    .run()
 }
 
 /** 工具栏轻量提示（浮在按钮上方 800ms 自动消失） */
@@ -2071,6 +2225,8 @@ const svg = {
   // 橡皮擦：斜长方体 + 底部接触面 + 擦痕
   clearFormat: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 21h20"/><path d="m7 20-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 20"/></svg>`,
   comment: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/></svg>`,
+  // 校对：放大镜 + 对勾（波浪线由编辑器渲染，此处仅作入口图标）
+  proofread: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M8.5 11.5l1.8 1.8 3.2-3.6"/></svg>`,
   indent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="7 10 9 12 7 14"/></svg>`,
   outdent: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/><polyline points="17 10 15 12 17 14"/></svg>`,
   // ── 表格操作图标 ──
@@ -2100,7 +2256,7 @@ function btnClass(active: boolean) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full min-h-0 rich-editor-wrapper" :class="{ 'is-material': editMode === 'material' }" :style="{ backgroundColor: contentBg }">
+  <div class="relative flex flex-col h-full min-h-0 rich-editor-wrapper" :class="{ 'is-material': editMode === 'material' }" :style="{ backgroundColor: contentBg }">
     <!-- 工具栏 -->
     <div
       class="rich-toolbar flex items-center gap-0.5 px-1.5 py-1 border-b shrink-0 flex-wrap select-none"
@@ -2165,6 +2321,16 @@ function btnClass(active: boolean) {
 
       <button title="高亮 Ctrl+G" :class="btnClass(active.highlight)" @mousedown.prevent="execHighlight" v-html="svg.highlighter" />
       <button v-if="editMode !== 'material'" title="插入批注" :class="btnClass(active.comment)" @mousedown.prevent="execComment" v-html="svg.comment" />
+      <div v-if="editMode !== 'material'" class="relative inline-flex">
+        <button
+          title="校对：全文/选区标注错别字、标点、语法等（可在右侧面板处理）"
+          :class="btnClass(proofreadActive)"
+          :disabled="proofreadStore.loading"
+          @mousedown.prevent="runProofreadAction"
+          v-html="svg.proofread"
+        />
+        <span v-if="proofreadStore.loading" class="pf-btn-spinner" />
+      </div>
       <button title="清除格式" class="rich-btn" @mousedown.prevent="execClearFormat" v-html="svg.clearFormat" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
@@ -2215,7 +2381,7 @@ function btnClass(active: boolean) {
           class="rich-btn min-w-[100px] flex items-center gap-0.5 text-[11px]"
           @mousedown.prevent="toggleFontDropdown"
         >
-          <span class="whitespace-nowrap" :style="{ fontFamily: fontFamily }">{{ fontFamily }}</span>
+          <span class="whitespace-nowrap" :style="{ fontFamily: fontFamily }">{{ fontFamilyLabel }}</span>
           <span v-html="svg.chevronDown" class="flex items-center shrink-0" :class="{ 'rotate-180': fontDropdownOpen }" />
         </button>
         <div
@@ -2488,11 +2654,26 @@ function btnClass(active: boolean) {
         @mousedown="startResizeOutline"
       />
 
+      <!-- 校对进度浮层（loading 时显示，绝对定位不占布局空间） -->
+      <div v-if="proofreadStore.manualRun" class="proofread-loading-toast">
+        <span class="pf-spinner" />
+        <span>校对进行中…</span>
+      </div>
+      <!-- 校对无问题提示（手动校对返回 0 问题时显示，约 2.5 秒后自动销毁） -->
+      <div v-else-if="proofreadStore.cleanHint" class="proofread-clean-toast">
+        <span>✅ 未发现问题</span>
+      </div>
+
       <!-- TipTap 编辑区 -->
       <EditorContent :editor="editor" class="flex-1 overflow-y-auto rich-content" :style="{ color: contentText }" />
 
       <!-- 批注面板（CandidatePanel 式右侧抽屉，内联 flex 子节点挤占编辑器空间） -->
-      <CommentListPanel v-if="editMode !== 'material'" @jump="onCommentListJump" />
+      <CommentListPanel
+        v-if="editMode !== 'material'"
+        @jump="onCommentListJump"
+        @jumpProofread="onProofreadJump"
+        @replaceProofread="onProofreadReplace"
+      />
     </div>
 
     <!-- 批注输入浮层 -->
@@ -2505,6 +2686,20 @@ function btnClass(active: boolean) {
 
     <!-- 批注 hover 浮层 -->
     <CommentTooltip ref="tooltipRef" />
+
+    <!-- 校对 hover 浮层 -->
+    <div
+      v-if="proofreadTip.show && proofreadTip.issue"
+      class="proofread-tip"
+      :style="{ left: proofreadTip.x + 'px', top: proofreadTip.y + 'px' }"
+    >
+      <div>
+        <span class="pf-cat">{{ proofreadTip.issue.category }}</span>
+        <span class="pf-old">{{ proofreadTip.issue.original }}</span> →
+        <span class="pf-new">{{ proofreadTip.issue.suggestion }}</span>
+      </div>
+      <div v-if="proofreadTip.issue.reason" style="margin-top: 4px; opacity: 0.8">{{ proofreadTip.issue.reason }}</div>
+    </div>
 
     <!-- 工具栏轻量提示 -->
     <div v-if="toolbarHint" class="rich-toolbar-hint">{{ toolbarHint }}</div>
@@ -2799,6 +2994,129 @@ function btnClass(active: boolean) {
   border-radius: 2px;
   box-shadow: var(--ae-search-shadow);
 }
+
+/* ── 校对波浪线 ── */
+.rich-content .ProseMirror .proofread-underline {
+  text-decoration: underline wavy #ef4444;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+.dark .rich-content .ProseMirror .proofread-underline {
+  text-decoration-color: #f87171;
+}
+
+/* ── 校对进度浮层（绝对定位，不占布局空间） ── */
+.proofread-loading-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.dark .proofread-loading-toast {
+  color: #e5e7eb;
+  background: rgba(31, 41, 55, 0.92);
+  border-color: rgba(248, 113, 113, 0.45);
+}
+/* 校对无问题提示（绿色，2.5 秒后自动消失） */
+.proofread-clean-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #065f46;
+  background: rgba(236, 253, 245, 0.95);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+  animation: pf-clean-in 0.18s ease-out;
+}
+@keyframes pf-clean-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.dark .proofread-clean-toast {
+  color: #6ee7b7;
+  background: rgba(6, 78, 59, 0.92);
+  border-color: rgba(16, 185, 129, 0.5);
+}
+/* 旋转指示器 */
+.pf-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(239, 68, 68, 0.3);
+  border-top-color: #ef4444;
+  border-radius: 50%;
+  animation: pf-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes pf-spin {
+  to { transform: rotate(360deg); }
+}
+/* 按钮上叠加的旋转图标（不占空间） */
+.pf-btn-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.pf-btn-spinner::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(239, 68, 68, 0.35);
+  border-top-color: #ef4444;
+  border-radius: 50%;
+  animation: pf-spin 0.7s linear infinite;
+}
+/* ── 校对 hover 浮层 ── */
+.proofread-tip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1f2937;
+  background: #fff;
+  border: 1px solid #fecaca;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+.dark .proofread-tip {
+  color: #e5e7eb;
+  background: #1f2937;
+  border-color: #7f1d1d;
+}
+.proofread-tip .pf-cat { color: #ef4444; font-weight: 600; margin-right: 4px; }
+.proofread-tip .pf-old { text-decoration: line-through; opacity: 0.7; }
+.proofread-tip .pf-new { color: #059669; font-weight: 600; }
+.dark .proofread-tip .pf-new { color: #34d399; }
 
 /* ── 工具栏按钮 ── */
 .rich-btn {
