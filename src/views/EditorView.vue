@@ -1038,6 +1038,9 @@ let scaleChangedUnlisten: (() => void) | null = null;
 onMounted(async () => {
   const win = getCurrentWindow();
 
+  // 窗口初始隐藏，现在显示（splashscreen 已正确渲染主题）
+  await win.show();
+
   try {
     await store.initDocument();
     store.loadFolders();
@@ -1113,8 +1116,10 @@ onMounted(async () => {
       }
     });
   } finally {
-    // 确保窗口一定显示，避免初始化失败导致窗口永远隐藏
-    await win.show();
+    // 初始化完成，淡出启动画面
+    await nextTick();
+    const splash = document.getElementById('splashscreen');
+    if (splash) splash.classList.add('splash-hidden');
   }
 });
 
@@ -1245,6 +1250,9 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 async function tryExit() {
+  // 后台启动保存（不等待），让确认对话框即时弹出
+  let savePromise: Promise<void> = Promise.resolve();
+
   // 隐藏浏览器窗口，避免 always_on_top 遮挡退出确认弹窗
   if (browserOpen.value) {
     browserManuallyHidden.value = true;
@@ -1253,17 +1261,17 @@ async function tryExit() {
     } catch { /* 忽略 */ }
   }
   if (currentContent.value) {
-    try {
-      await invoke("save_draft", {
-        docId: store.currentDocId,
-        content: JSON.stringify({
-          ...currentContent.value,
-          comments: comments.value ?? [],
-          docSchemaVersion: 1,
-        }),
-      });
-    } catch { /* 忽略保存错误 */ }
+    savePromise = invoke("save_draft", {
+      docId: store.currentDocId,
+      content: JSON.stringify({
+        ...currentContent.value,
+        comments: comments.value ?? [],
+        docSchemaVersion: 1,
+      }),
+    }).catch(() => {});
   }
+
+  // 立即弹出确认对话框（不需要等保存完成）
   const ok = await confirm({
     title: "退出 AiPen",
     message: "确定要退出吗？编辑内容已自动保存。",
@@ -1272,6 +1280,8 @@ async function tryExit() {
     cancelLabel: "取消",
   });
   if (ok) {
+    // 确保保存完成再退出
+    await savePromise;
     // 先隐藏窗口内容，避免对话框关闭到进程退出之间的视觉闪烁
     document.body.style.opacity = "0";
     await invoke("exit_app");

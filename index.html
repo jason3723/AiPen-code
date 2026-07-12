@@ -51,6 +51,79 @@
         background-color: var(--ae-boot-bg);
       }
 
+      /* ══════════════════════════════════════════════════════════════
+         ★ 启动画面（Splashscreen）：复用 --ae-boot-* 变量实现主题跟随
+           深色 = 深蓝 #1d2032 → 白色文字
+           浅色 = 白色 #ffffff → 深色文字
+           应用初始化完成后通过 .splash-hidden 淡出
+         ══════════════════════════════════════════════════════════════ */
+      #splashscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--ae-boot-bg);
+        color: var(--ae-boot-fg);
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+      }
+      #splashscreen.splash-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .splash-inner {
+        text-align: center;
+        animation: splash-fade-in 0.5s ease-out;
+      }
+      .splash-icon {
+        font-size: 52px;
+        line-height: 1;
+        margin-bottom: 20px;
+        filter: drop-shadow(0 2px 8px rgba(0,0,0,0.08));
+      }
+      html.dark .splash-icon {
+        filter: drop-shadow(0 2px 12px rgba(0,0,0,0.3));
+      }
+      .splash-title {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 3px;
+        line-height: 1.2;
+      }
+      .splash-subtitle {
+        font-size: 14px;
+        opacity: 0.5;
+        margin-top: 10px;
+        letter-spacing: 1px;
+      }
+      .splash-loader {
+        margin-top: 36px;
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+      }
+      .splash-loader span {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--ae-boot-fg);
+        opacity: 0.25;
+        transform: scale(0.85);
+        animation: splash-bounce 1.4s ease-in-out infinite;
+      }
+      .splash-loader span:nth-child(2) { animation-delay: 0.16s; }
+      .splash-loader span:nth-child(3) { animation-delay: 0.32s; }
+      @keyframes splash-fade-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes splash-bounce {
+        0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+        40%           { opacity: 0.8;  transform: scale(1.15); }
+      }
+
       /* 打印时允许页面溢出 + 白色背景 */
       @media print {
         html, body, #root {
@@ -63,6 +136,19 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- ★ 启动画面：Vue 挂载前显示，初始化完成后淡出 -->
+    <div id="splashscreen">
+      <div class="splash-inner">
+        <div class="splash-icon">✒️</div>
+        <div class="splash-title">AiPen</div>
+        <div class="splash-subtitle">AI 辅助文档写作</div>
+        <div class="splash-loader">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
