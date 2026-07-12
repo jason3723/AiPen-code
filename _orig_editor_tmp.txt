@@ -1155,8 +1155,6 @@ async function handleMaximize() {
   overlayText.value = isMax ? "还原窗口" : "最大化窗口";
   overlayVisible.value = true;
   await nextTick();
-  // ★ 必须等 2 帧确保 overlay 被浏览器实际绘制，窗口变化时才不会有闪屏
-  await new Promise((r) => requestAnimationFrame(r));
   await new Promise((r) => requestAnimationFrame(r));
 
   if (isMax) {
@@ -1168,15 +1166,8 @@ async function handleMaximize() {
   // 等窗口稳定
   await sleep(400);
 
-  // ★ 先解除 contain 让编辑器在遮罩下重排，等几帧渲染稳定后再撤掉遮罩
-  isResizing.value = false;
-  await nextTick();
-  // 强制同步回流确保布局就绪
-  void document.documentElement.offsetHeight;
-  // 等 3 帧：布局 → 绘制 → 合成器提交
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
+  // ★ 遮罩下：解冻布局 → 强制合成器提交最终帧（解决鼠标移入闪屏）
+  await flushCompositorFrame();
 
   overlayVisible.value = false;
   // 最大化/全屏后主区域尺寸已变，主动让浏览器 webview 重新跟随
@@ -1191,8 +1182,6 @@ async function handleToggleFullscreen() {
   overlayText.value = isFullscreen ? "退出沉浸模式" : "进入沉浸模式";
   overlayVisible.value = true;
   await nextTick();
-  // ★ 必须等 2 帧确保 overlay 被绘制
-  await new Promise((r) => requestAnimationFrame(r));
   await new Promise((r) => requestAnimationFrame(r));
 
   if (isFullscreen) {
@@ -1210,15 +1199,51 @@ async function handleToggleFullscreen() {
   // 等面板展开/折叠 + 窗口稳定
   await sleep(400);
 
-  // ★ 先解除 contain 让编辑器在遮罩下重排，等几帧渲染稳定后再撤掉遮罩
-  isResizing.value = false;
-  await nextTick();
-  void document.documentElement.offsetHeight;
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
+  // ★ 遮罩下：解冻布局 → 强制合成器提交最终帧（解决鼠标移入闪屏）
+  await flushCompositorFrame();
 
   overlayVisible.value = false;
+}
+
+/**
+ * 强制 WebView2 合成器在遮罩下提交一帧完整画面。
+ * 
+ * 背景：窗口 resize 后如果鼠标不在界面上，WebView2 合
+ * 成器会"休眠"，帧缓存保持脏状态。之后鼠标移入时合成器
+ * 醒来、提交第一帧脏帧 → 下一帧修正 → 产生剧烈闪屏。
+ * 
+ * 此处通过三个步骤强制提交干净帧：
+ * 1. 解除 CSS contain → ProseMirror 立即触发最终布局
+ * 2. 级联同步回流（offsetHeight → offsetWidth → getClientRects）
+ * 3. 微小 opacity 变动欺骗合成器（0→1 只隔一帧，肉眼不可见）
+ */
+async function flushCompositorFrame() {
+  // 1. 解除 editor-contained → ProseMirror ResizeObserver 即刻触发完整重排
+  isResizing.value = false;
+  await nextTick();
+
+  // 2. 级联强制同步回流：从文档根一路穿透到编辑器内层
+  void document.documentElement.offsetHeight;
+  void document.body.offsetHeight;
+  const mainEl = mainAreaRef.value;
+  if (mainEl) {
+    void mainEl.offsetHeight;
+    const ec = mainEl.querySelector('.rich-content');
+    if (ec) {
+      void (ec as HTMLElement).offsetHeight;
+      void (ec as HTMLElement).offsetWidth;
+      // getClientRects 是最高级别的强制回流——必须完成完整 layout tree + paint tree
+      void (ec as HTMLElement).getClientRects();
+    }
+  }
+
+  // 3. 欺骗合成器：微不可察的 opacity 变化，迫使合成器提交一帧到 swap chain
+  document.body.style.opacity = '0.9999';
+  await new Promise((r) => requestAnimationFrame(r));
+  document.body.style.opacity = '1';
+  // 再等两帧确保 swap chain 写入完成
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => requestAnimationFrame(r));
 }
 
 function sleep(ms: number) {
@@ -1226,7 +1251,7 @@ function sleep(ms: number) {
 }
 async function tryExit() {
   // 后台启动保存（不等待），让确认对话框即时弹出
-  let savePromise: Promise<unknown> = Promise.resolve();
+  let savePromise: Promise<void> = Promise.resolve();
 
   // 隐藏浏览器窗口，避免 always_on_top 遮挡退出确认弹窗
   if (browserOpen.value) {
@@ -2635,17 +2660,23 @@ async function handleExportWord() {
       <Transition name="overlay-fade">
         <div
           v-if="overlayVisible"
-          class="fullscreen-overlay"
-          :class="{ 'fullscreen-overlay--dark': isDark }"
+          class="fixed inset-0 z-[99999] flex items-center justify-center"
+          style="background: #1e1f2b"
         >
           <div class="flex flex-col items-center gap-4">
             <!-- 品牌标识动画 -->
-            <div class="fullscreen-overlay-title">AiPen</div>
+            <div class="text-blue-400 text-xl font-bold tracking-wider animate-pulse">
+              AiPen
+            </div>
             <!-- 状态文字 -->
-            <div class="fullscreen-overlay-text">{{ overlayText }}</div>
+            <div class="text-gray-400 text-sm">
+              {{ overlayText }}
+            </div>
             <!-- 进度小点 -->
-            <div class="fullscreen-overlay-dots">
-              <span></span><span></span><span></span>
+            <div class="flex gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0ms"></span>
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 150ms"></span>
+              <span class="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 300ms"></span>
             </div>
           </div>
         </div>
@@ -2681,55 +2712,6 @@ async function handleExportWord() {
 }
 
 /* 全屏过渡遮罩 */
-.fullscreen-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f8f9fa;
-  color: #374151;
-}
-.fullscreen-overlay--dark {
-  background: #1e1f2b;
-  color: #9ca3af;
-}
-.fullscreen-overlay-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #3b82f6;
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.fullscreen-overlay--dark .fullscreen-overlay-title {
-  color: #60a5fa;
-}
-.fullscreen-overlay-text {
-  font-size: 0.875rem;
-  color: inherit;
-}
-.fullscreen-overlay-dots {
-  display: flex;
-  gap: 0.375rem;
-}
-.fullscreen-overlay-dots span {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #3b82f6;
-  animation: bounce 1s ease-in-out infinite;
-}
-.fullscreen-overlay--dark .fullscreen-overlay-dots span {
-  background: #60a5fa;
-}
-.fullscreen-overlay-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.fullscreen-overlay-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
 .overlay-fade-enter-active {
   transition: opacity 0.12s ease-out;
 }

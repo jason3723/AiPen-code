@@ -1,4 +1,4 @@
-import { ref, watch } from "vue";
+import { ref, watch, onScopeDispose } from "vue";
 
 export type ThemeMode = "dark" | "light";
 /** 显式选择模式:user(用户手动) | system(跟随系统) */
@@ -86,17 +86,14 @@ function onSystemChange(e: MediaQueryListEvent) {
   }
 }
 
-// 单例 store:媒体查询监听与 app 同生命周期，无需在 scope 销毁时移除，
-// 故不使用 onScopeDispose（模块顶层无 active effect scope，调用会触发 Vue 警告）。
-// 用标志位防止 HMR 重复注册。
-let mqlBound = false;
-if (mql && !mqlBound) {
-  mqlBound = true;
+if (mql) {
   // 兼容旧 API(Safari < 14)
   if (typeof mql.addEventListener === "function") {
     mql.addEventListener("change", onSystemChange);
+    onScopeDispose(() => mql!.removeEventListener("change", onSystemChange));
   } else if (typeof (mql as any).addListener === "function") {
     (mql as any).addListener(onSystemChange);
+    onScopeDispose(() => (mql as any).removeListener(onSystemChange));
   }
 }
 
