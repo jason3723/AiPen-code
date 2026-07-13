@@ -2,6 +2,7 @@ use crate::{ai, db, diff, version, tokenizer};
 use tauri::{Emitter, Manager, State};
 use serde_json;
 use std::path::{Path, PathBuf};
+use url::Url;
 use ai::ChatMessagePayload;
 use uuid::Uuid;
 
@@ -1821,6 +1822,271 @@ pub async fn delete_bookmark(
     db::delete_bookmark(&state.db, &bm_id).await.map_err(|e| e.to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Favicon 缓存系统（三阶梯：HTML解析 → /favicon.ico → Google s2）
+// ═══════════════════════════════════════════════════════════════
+
+/// 根据文件魔数检测图片 MIME，非图片返回 None
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
+        Some("image/png")
+    } else if bytes.len() >= 3 && &bytes[0..3] == b"\xff\xd8\xff" {
+        Some("image/jpeg")
+    } else if bytes.len() >= 4 && &bytes[0..4] == b"GIF8" {
+        Some("image/gif")
+    } else if bytes.len() >= 4 && &bytes[0..4] == b"\x00\x00\x01\x00" { // ICO: 4字节
+        Some("image/x-icon")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.len() >= 4 && &bytes[0..4] == b"<svg" {
+        Some("image/svg+xml")
+    } else {
+        None
+    }
+}
+
+fn bytes_to_data_uri(bytes: &[u8]) -> Option<String> {
+    detect_image_mime(bytes).map(|mime| {
+        format!(
+            "data:{};base64,{}",
+            mime,
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
+        )
+    })
+}
+
+fn extract_host(raw: &str) -> Result<String, String> {
+    let url = if raw.contains("://") { raw.to_string() } else { format!("https://{}", raw) };
+    Url::parse(&url)
+        .map_err(|e| format!("解析 URL 失败: {} ({})", e, raw))?
+        .host_str()
+        .map(|h| h.to_string())
+        .ok_or_else(|| "URL 缺少 host".to_string())
+}
+
+fn build_favicon_cache_path(app_handle: &tauri::AppHandle, host: &str) -> Result<PathBuf, String> {
+    let dir = app_handle.path().app_local_data_dir()
+        .map_err(|e| format!("获取数据目录失败: {}", e))?;
+    Ok(dir.join("favicon_cache").join(format!("{}.ico", host)))
+}
+
+fn validate_and_cache(bytes: &[u8], cache_path: &PathBuf) -> Result<Option<String>, String> {
+    if bytes.len() > 256 * 1024 {
+        eprintln!("[Favicon] 数据过大: {} 字节", bytes.len());
+        return Ok(None);
+    }
+    if let Some(uri) = bytes_to_data_uri(bytes) {
+        if let Some(parent) = cache_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+        }
+        std::fs::write(cache_path, bytes).map_err(|e| format!("写缓存失败: {}", e))?;
+        Ok(Some(uri))
+    } else {
+        eprintln!("[Favicon] 魔数不匹配，不缓存");
+        Ok(None)
+    }
+}
+
+/// 下载 URL 内容，仅当魔数是图片时才返回
+async fn try_download_as_image(
+    client: &reqwest::Client,
+    url: &str,
+    require_image_ct: bool,
+) -> Option<Vec<u8>> {
+    match client.get(url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let ct = resp.headers().get("content-type")
+                .and_then(|v| v.to_str().ok()).unwrap_or("");
+            let is_image_ct = ct.starts_with("image/");
+            if require_image_ct && !ct.is_empty() && !is_image_ct {
+                eprintln!("[Favicon] Content-Type 非图片 ({}): {}", ct, url);
+                return None;
+            }
+            let data = resp.bytes().await.ok()?;
+            if data.is_empty() { return None; }
+            if detect_image_mime(&data).is_some() {
+                eprintln!("[Favicon] 下载成功: {} ({} 字节)", url, data.len());
+                Some(data.to_vec())
+            } else {
+                eprintln!("[Favicon] 下载内容非图片 (前20字节={:02x?}): {}", &data[..data.len().min(20)], url);
+                None
+            }
+        }
+        Ok(resp) => {
+            eprintln!("[Favicon] HTTP {}: {}", resp.status().as_u16(), url);
+            None
+        }
+        Err(e) => {
+            eprintln!("[Favicon] 请求失败: {} — {}", url, e);
+            None
+        }
+    }
+}
+
+/// 解析 HTML 页面，提取 <link rel="icon"> 并下载
+async fn try_favicon_from_html(
+    client: &reqwest::Client,
+    origin: &str,
+    parsed: &Url,
+) -> Option<Vec<u8>> {
+    let html = match client.get(origin).send().await {
+        Ok(resp) if resp.status().is_success() => resp.text().await.ok()?,
+        _ => return None,
+    };
+    if html.len() > 2 * 1024 * 1024 { return None; } // 2MB 上限
+
+    // 从 HTML 中提取 favicon URL
+    let icon_url = extract_icon_href(&html, parsed)?;
+    eprintln!("[Favicon] HTML 解析到 icon: {}", icon_url);
+    try_download_as_image(client, &icon_url, false).await
+}
+
+/// 从 HTML 中查找 <link rel="icon"> 或 <link rel="shortcut icon"> 的 href
+fn extract_icon_href(html: &str, base_url: &Url) -> Option<String> {
+    // 用简单扫描找 <link ... > 标签，正则太重，手写扫描
+    let lower = html.to_lowercase();
+    let mut pos = 0;
+    while let Some(link_start) = lower[pos..].find("<link") {
+        let abs = pos + link_start;
+        let tag_end = lower[abs..].find('>')?;
+        let tag = &html[abs..abs + tag_end + 1];
+        pos = abs + tag_end + 1;
+
+        // 检查 rel = icon / shortcut icon
+        if !tag.to_lowercase().contains("icon") {
+            continue;
+        }
+        let rel_is_icon = {
+            let t = tag.to_lowercase();
+            // 排除 rel=stylesheet, rel=preload 等，只匹配 icon 相关
+            (t.contains("rel=\"icon\"") || t.contains("rel='icon'")
+                || t.contains("rel=\"shortcut icon\"") || t.contains("rel='shortcut icon'")
+                || t.contains("rel=icon") || t.contains("rel=\"apple-touch-icon"))
+                && !t.contains("stylesheet") && !t.contains("preload") && !t.contains("preconnect")
+        };
+        if !rel_is_icon {
+            continue;
+        }
+
+        // 提取 href="..."
+        if let Some(href) = extract_attr(&tag, "href") {
+            let resolved = resolve_url(base_url, &href)?;
+            // 优先 SVG（矢量、小）
+            if resolved.ends_with(".svg") || resolved.contains(".svg?") {
+                return Some(resolved);
+            }
+            // 记录第一个非 SVG 匹配，继续找 SVG
+            return Some(resolved);
+        }
+    }
+    None
+}
+
+fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower = tag.to_lowercase();
+    let needle = format!("{}=", attr);
+    let idx = lower.find(&needle)?;
+    let rest = &tag[idx + needle.len()..];
+    let quote = rest.chars().next()?;
+    let (end, skip) = if quote == '"' || quote == '\'' {
+        // 带引号
+        (rest[1..].find(quote)?, 2)
+    } else {
+        // 无引号，到空格或 > 结束
+        (rest.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(rest.len()), 0)
+    };
+    Some(rest[skip - 1..][..end].to_string())  // skip-1 已跳过开引号
+}
+
+fn resolve_url(base: &Url, href: &str) -> Option<String> {
+    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("//") {
+        if href.starts_with("//") {
+            Some(format!("{}:{}", base.scheme(), href))
+        } else {
+            Some(href.to_string())
+        }
+    } else if href.starts_with('/') {
+        Some(format!("{}://{}{}", base.scheme(), base.host_str()?, href))
+    } else {
+        // 相对路径
+        let path = base.path();
+        let dir = match path.rfind('/') {
+            Some(i) => &path[..i + 1],
+            None => "/",
+        };
+        Some(format!("{}://{}{}{}", base.scheme(), base.host_str()?, dir, href))
+    }
+}
+
+/// 查询缓存中的 favicon（不下载）
+#[tauri::command]
+pub async fn get_favicon_cache_path(
+    app_handle: tauri::AppHandle,
+    url: String,
+) -> Result<Option<String>, String> {
+    let host = extract_host(&url)?;
+    let cache_path = build_favicon_cache_path(&app_handle, &host)?;
+    if cache_path.exists() {
+        let bytes = std::fs::read(&cache_path).map_err(|e| format!("读缓存失败: {}", e))?;
+        if let Some(uri) = bytes_to_data_uri(&bytes) {
+            return Ok(Some(uri));
+        }
+        eprintln!("[Favicon] 缓存非图片，删除: {:?}", cache_path);
+        let _ = std::fs::remove_file(&cache_path);
+    }
+    Ok(None)
+}
+
+/// 下载 favicon 并缓存（三阶梯：HTML解析 → /favicon.ico → Google s2）
+#[tauri::command]
+pub async fn fetch_favicon(
+    app_handle: tauri::AppHandle,
+    url: String,
+) -> Result<Option<String>, String> {
+    let url = if url.contains("://") { url } else { format!("https://{}", url) };
+    let parsed = Url::parse(&url).map_err(|e| format!("解析 URL 失败: {}", e))?;
+    let host = parsed.host_str().ok_or("URL 缺少 host")?.to_string();
+    let cache_path = build_favicon_cache_path(&app_handle, &host)?;
+
+    // 缓存命中
+    if cache_path.exists() {
+        let bytes = std::fs::read(&cache_path).map_err(|e| format!("读缓存失败: {}", e))?;
+        if let Some(uri) = bytes_to_data_uri(&bytes) {
+            return Ok(Some(uri));
+        }
+        eprintln!("[Favicon] 缓存非图片，删除: {:?}", cache_path);
+        let _ = std::fs::remove_file(&cache_path);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    let origin = format!("{}://{}", parsed.scheme(), host);
+
+    // 1) 解析 HTML 中的 <link rel="icon">（浏览器标准方式）
+    eprintln!("[Favicon] ① 解析 {}", origin);
+    if let Some(data) = try_favicon_from_html(&client, &origin, &parsed).await {
+        return validate_and_cache(&data, &cache_path);
+    }
+
+    // 2) {origin}/favicon.ico（兜底）
+    eprintln!("[Favicon] ② {}/favicon.ico", origin);
+    if let Some(data) = try_download_as_image(&client, &format!("{}/favicon.ico", origin), false).await {
+        return validate_and_cache(&data, &cache_path);
+    }
+
+    // 3) Google s2（最后手段）
+    let google_url = format!("https://www.google.com/s2/favicons?domain={}&sz=32", host);
+    eprintln!("[Favicon] ③ {}", google_url);
+    if let Some(data) = try_download_as_image(&client, &google_url, false).await {
+        return validate_and_cache(&data, &cache_path);
+    }
+
+    eprintln!("[Favicon] ✗ 全部失败: {}", host);
+    Ok(None)
+}
+
 // ─── 浏览器内嵌窗口（无装饰、精确定位在编辑区上方） ──────────
 
 use base64::Engine;
@@ -1935,13 +2201,13 @@ const BROWSER_INIT_SCRIPT: &str = r#"
     } catch(e) {}
   })();
 
-  // ── 3. 右键菜单（存入素材库 + 添加到AI对话 + 复制，浅/深色自适应） ──
-  // 注册函数独立于其他模块，即使前面的注入失败也确保菜单可用
-  function __aipenSetupContextMenu() {
+  // ── 3. 选中悬浮工具条（复制 + 存素材库 + AI对话 + 笔记，浅/深色自适应） ──
+  // 注册函数独立于其他模块，即使前面的注入失败也确保工具条可用
+  function __aipenSetupFloatingToolbar() {
     try {
       // 避免重复注册
-      if (window.__aipenContextMenuInstalled) return;
-      window.__aipenContextMenuInstalled = true;
+      if (window.__aipenToolbarInstalled) return;
+      window.__aipenToolbarInstalled = true;
 
       // ══════════════════════════════════════════════════════════
       // 主题检测与配色方案
@@ -1988,19 +2254,26 @@ const BROWSER_INIT_SCRIPT: &str = r#"
       }
 
       // ══════════════════════════════════════════════════════════
-      // 菜单状态
+      // 工具条状态
       // ══════════════════════════════════════════════════════════
-      var menuEl = null;
-      var overlayEl = null;
-      var pending = false;
+      var toolbarEl = null;
+      var scrollLockHandler = null;
+      var pointerDown = false;
+      // 笔记下拉菜单状态（模块级，供 populateNoteDropdown 和监听器访问）
+      var _noteText = '';
+      var _noteUrl = '';
+      var _noteTitle = '';
 
       function cleanup() {
-        if (pending) return;
+        removeNoteDropdown();
+        if (scrollLockHandler) {
+          window.removeEventListener('wheel', scrollLockHandler, { passive: false });
+          window.removeEventListener('touchmove', scrollLockHandler, { passive: false });
+          scrollLockHandler = null;
+        }
         try {
-          if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
-          menuEl = null;
-          if (overlayEl && overlayEl.parentNode) overlayEl.parentNode.removeChild(overlayEl);
-          overlayEl = null;
+          if (toolbarEl && toolbarEl.parentNode) toolbarEl.parentNode.removeChild(toolbarEl);
+          toolbarEl = null;
         } catch(e) {}
       }
 
@@ -2016,219 +2289,366 @@ const BROWSER_INIT_SCRIPT: &str = r#"
         return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       }
 
-      // 共享的延时清理函数（被闭包捕获，使用外层 menuEl/overlayEl）
-      function delayedCleanup() {
-        var el0 = overlayEl;
-        var mel0 = menuEl;
-        setTimeout(function() {
-          if (el0 && el0.parentNode) el0.parentNode.removeChild(el0);
-          if (mel0 && mel0.parentNode) mel0.parentNode.removeChild(mel0);
-          overlayEl = null;
-          menuEl = null;
-          pending = false;
-        }, 0);
+      // 输入框 / textarea / 可编辑元素内的选区不弹工具条
+      function isEditable() {
+        var el = document.activeElement;
+        if (!el) return false;
+        var tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+        if (el.isContentEditable) return true;
+        return false;
       }
 
-      // 生成分隔线
-      function makeSeparator(c) {
-        var sep = document.createElement('div');
-        sep.style.cssText = 'height:1px;margin:3px 8px;background:' + c.sep + ';opacity:0.6;';
-        return sep;
+      // 动作发送：__TAURI__ IPC（快速）+ URL 导航（可靠回退）
+      function sendAction(eventName, navPath, text, url, title) {
+        try {
+          if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
+            window.__TAURI__.event.emit(eventName, { text: text, url: url, title: title });
+          }
+        } catch(ex) {}
+        var encoded = encodeClipPayload(text, url, title);
+        var navUrl = 'https://aipen-clip.internal/' + navPath + '/' + encoded;
+        setTimeout(function() { try { window.location.href = navUrl; } catch(ex) {} }, 0);
       }
 
-      // 生成菜单项
-      function makeItem(label, shortcut, c) {
+      // 通用 payload 发送（支持任意字段）
+      function sendPayload(eventName, navPath, payload) {
+        try {
+          if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
+            window.__TAURI__.event.emit(eventName, payload);
+          }
+        } catch(ex) {}
+        try {
+          var json = JSON.stringify(payload);
+          var enc = new TextEncoder();
+          var bytes = enc.encode(json);
+          var bin = '';
+          for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+          var encoded = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          var navUrl = 'https://aipen-clip.internal/' + navPath + '/' + encoded;
+          setTimeout(function() { try { window.location.href = navUrl; } catch(ex) {} }, 0);
+        } catch(ex) {}
+      }
+
+      // ── 笔记下拉菜单 ──
+      var noteDropdownEl = null;
+      var _cachedDocs = null;
+      var _dropdownCloseTimer = null;
+
+      // 持久监听文档列表响应（事件通道 + eval 直调双保险）
+      window.__aipenReceiveDocs = function(payload) {
+        _cachedDocs = payload;
+        if (noteDropdownEl && noteDropdownEl.parentNode) {
+          populateNoteDropdown(noteDropdownEl, _cachedDocs);
+        }
+      };
+      try {
+        if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen) {
+          window.__TAURI__.event.listen('browser-docs-response', function(event) {
+            window.__aipenReceiveDocs(event.payload);
+          });
+        }
+      } catch(e) {}
+
+      function removeNoteDropdown() {
+        if (_dropdownCloseTimer) { clearTimeout(_dropdownCloseTimer); _dropdownCloseTimer = null; }
+        try {
+          if (noteDropdownEl && noteDropdownEl.parentNode) noteDropdownEl.parentNode.removeChild(noteDropdownEl);
+        } catch(e) {}
+        noteDropdownEl = null;
+        _cachedDocs = null; // 清除缓存，下次打开时重新拉取最新文档列表
+      }
+
+      function makeDropdownItem(label, c, onClick) {
         var item = document.createElement('div');
-        item.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:6px 12px;cursor:pointer;transition:background 0.1s;';
-        item.innerHTML = '<span>' + label + '</span>'
-          + '<span style="color:' + c.subtext + ';font-size:11px;margin-left:16px;flex-shrink:0;">' + (shortcut || '') + '</span>';
-        item.addEventListener('mouseenter', function() {
-          if (!pending) item.style.background = c.hoverBg;
-        });
-        item.addEventListener('mouseleave', function() {
-          if (!pending) item.style.background = '';
-        });
+        item.style.cssText = 'display:flex;align-items:center;padding:7px 12px;cursor:pointer;border-radius:6px;white-space:nowrap;font-size:13px;line-height:1.4;transition:background 0.1s;overflow:hidden;text-overflow:ellipsis;color:' + c.text + ';';
+        item.textContent = label;
+        item.addEventListener('mouseenter', function() { item.style.background = c.hoverBg; });
+        item.addEventListener('mouseleave', function() { item.style.background = ''; });
+        item.addEventListener('mousedown', function(ev) { ev.preventDefault(); ev.stopPropagation(); });
+        item.addEventListener('click', function(ev) { ev.preventDefault(); ev.stopPropagation(); onClick(); removeNoteDropdown(); cleanup(); });
         return item;
+      }
+
+      function makeDropdownDivider(c) {
+        var div = document.createElement('div');
+        div.style.cssText = 'height:1px;margin:3px 8px;background:' + (c.sep || c.border) + ';';
+        return div;
+      }
+
+      function populateNoteDropdown(dd, docs) {
+        var c = PALETTE[getTheme()];
+        var text = _noteText;
+        var url = _noteUrl;
+        var title = _noteTitle;
+        dd.innerHTML = '';
+        dd.appendChild(makeDropdownItem('📝 新建笔记', c, function() {
+          sendAction('browser-add-to-note', 'note', text, url, title);
+        }));
+        dd.appendChild(makeDropdownDivider(c));
+        var header = document.createElement('div');
+        header.style.cssText = 'padding:4px 10px;font-size:11px;color:' + c.subtext + ';user-select:none;font-weight:500;letter-spacing:0.3px;text-transform:uppercase;';
+        header.textContent = '追加到文档';
+        dd.appendChild(header);
+        if (docs && docs.docs && docs.docs.length > 0) {
+          docs.docs.forEach(function(doc) {
+            dd.appendChild(makeDropdownItem(doc.title || '未命名', c, function() {
+              sendPayload('browser-append-to-doc', 'append-doc', { docId: doc.id, text: text, url: url, title: title });
+            }));
+          });
+        } else {
+          var empty = document.createElement('div');
+          empty.style.cssText = 'padding:10px 10px;font-size:12px;color:' + c.subtext + ';user-select:none;text-align:center;';
+          empty.textContent = '暂无文档，点「新建笔记」创建';
+          dd.appendChild(empty);
+        }
+      }
+
+      function showNoteDropdown(btnEl) {
+        removeNoteDropdown();
+        var theme = getTheme();
+        var c = PALETTE[theme];
+        var dd = document.createElement('div');
+        dd.setAttribute('data-aipen-note-dropdown', '1');
+        // 与工具栏风格统一：毛玻璃背景 + 相同圆角/阴影/边框
+        dd.style.cssText = 'position:fixed;z-index:2147483647;min-width:190px;max-width:280px;max-height:280px;overflow-y:auto;'
+          + 'border-radius:10px;padding:5px;'
+          + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;'
+          + 'color:' + c.text + ';'
+          + 'backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);'
+          + 'user-select:none;-webkit-font-smoothing:antialiased;';
+        if (theme === 'dark') {
+          dd.style.background = 'rgba(38,38,50,0.94)';
+          dd.style.border = '1px solid rgba(255,255,255,0.12)';
+          dd.style.boxShadow = '0 10px 34px rgba(0,0,0,0.50), 0 2px 8px rgba(0,0,0,0.35)';
+        } else {
+          dd.style.background = 'rgba(255,255,255,0.92)';
+          dd.style.border = '1px solid rgba(0,0,0,0.10)';
+          dd.style.boxShadow = '0 10px 34px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08)';
+        }
+        // 按钮位置：留 8px 间距避免与工具栏重叠
+        var btnRect = btnEl.getBoundingClientRect();
+        var spaceBelow = window.innerHeight - btnRect.bottom;
+        if (spaceBelow > 180) {
+          dd.style.top = (btnRect.bottom + 8) + 'px';
+          dd.style.left = Math.max(4, btnRect.left) + 'px';
+        } else {
+          dd.style.bottom = (window.innerHeight - btnRect.top + 8) + 'px';
+          dd.style.left = Math.max(4, btnRect.left) + 'px';
+        }
+        // 确保不溢出右侧
+        var ddW = 260;
+        if (parseInt(dd.style.left) + ddW > window.innerWidth - 4) {
+          dd.style.left = (window.innerWidth - ddW - 4) + 'px';
+        }
+        // 下拉菜单悬浮时不关闭（覆盖按钮的离开定时器）
+        dd.addEventListener('mouseenter', function() {
+          if (_dropdownCloseTimer) { clearTimeout(_dropdownCloseTimer); _dropdownCloseTimer = null; }
+        });
+        dd.addEventListener('mouseleave', function() {
+          _dropdownCloseTimer = setTimeout(function() { removeNoteDropdown(); }, 300);
+        });
+        populateNoteDropdown(dd, _cachedDocs);
+        document.body.appendChild(dd);
+        noteDropdownEl = dd;
+        // 请求文档列表（未缓存时）
+        if (!_cachedDocs) {
+          sendPayload('browser-request-docs', 'docs-request', {});
+        }
+      }
+
+      function getSelectionText() {
+        var sel = window.getSelection();
+        return sel ? sel.toString() : '';
+      }
+
+      function getSelectionRect() {
+        var sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return null;
+        var range = sel.getRangeAt(0);
+        var rect = range.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0)) {
+          var rects = range.getClientRects();
+          if (rects && rects.length) rect = rects[0];
+          else return null;
+        }
+        return rect;
+      }
+
+      // 内联 SVG 线性图标（feather/lucide 风格，currentColor 跟随主题）
+      function iconCopy() { return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }
+      function iconSave() { return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'; }
+      function iconChat() { return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
+      function iconNote() { return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M3 21L21 3"/><path d="M21 16v5h-5"/><path d="M8 21H3v-5"/><path d="M8 3H3v5"/></svg>'; }
+
+      // 构建单个工具条按钮（图标 + 文字）
+      function makeBtn(iconSvg, label, c, onClick) {
+        var b = document.createElement('div');
+        b.style.cssText = 'display:flex;align-items:center;gap:5px;padding:6px 11px;cursor:pointer;'
+          + 'border-radius:8px;white-space:nowrap;font-size:13px;font-weight:500;line-height:1;'
+          + 'transition:background 0.12s ease,color 0.12s ease;';
+        b.innerHTML = iconSvg + '<span style="font-size:13px;">' + label + '</span>';
+        b.addEventListener('mouseenter', function() { b.style.background = c.hoverBg; });
+        b.addEventListener('mouseleave', function() { b.style.background = ''; });
+        b.addEventListener('mousedown', function(ev) { ev.preventDefault(); ev.stopPropagation(); });
+        b.addEventListener('click', function(ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          onClick();
+        });
+        return b;
+      }
+
+      // 显示悬浮工具条（选区正上方居中，空间不足则翻转，靠边夹取，不出界）
+      function showToolbar() {
+        if (isEditable()) { cleanup(); return; }
+        var text = getSelectionText().trim();
+        if (!text) { cleanup(); return; }
+        var rect = getSelectionRect();
+        if (!rect) { cleanup(); return; }
+        cleanup();
+
+        var theme = getTheme();
+        var c = PALETTE[theme];
+        var url = window.location.href;
+        var title = document.title;
+        // 保存笔记下拉菜单需要的上下文
+        _noteText = text;
+        _noteUrl = url;
+        _noteTitle = title;
+
+        toolbarEl = document.createElement('div');
+        toolbarEl.setAttribute('data-aipen-toolbar', '1');
+        toolbarEl.style.cssText = 'position:fixed;z-index:2147483647;display:flex;align-items:center;gap:1px;'
+          + 'border:1px solid ' + c.border + ';'
+          + 'border-radius:12px;padding:5px;'
+          + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;'
+          + 'color:' + c.text + ';'
+          + 'backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);'
+          + 'user-select:none;-webkit-font-smoothing:antialiased;';
+        // ima 风格：浅色更不透明 + 更深阴影以和白底区分；暗色用深底 + 柔和高光
+        if (theme === 'dark') {
+          toolbarEl.style.background = 'rgba(38,38,50,0.94)';
+          toolbarEl.style.borderColor = 'rgba(255,255,255,0.12)';
+          toolbarEl.style.boxShadow = '0 10px 34px rgba(0,0,0,0.50), 0 2px 8px rgba(0,0,0,0.35)';
+        } else {
+          toolbarEl.style.background = 'rgba(255,255,255,0.92)';
+          toolbarEl.style.borderColor = 'rgba(0,0,0,0.10)';
+          toolbarEl.style.boxShadow = '0 10px 34px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08)';
+        }
+
+        toolbarEl.appendChild(makeBtn(iconCopy(), '复制', c, function() {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function(){});
+          cleanup();
+        }));
+        toolbarEl.appendChild(makeBtn(iconSave(), '存素材库', c, function() {
+          sendAction('browser-clip-selected-text', 'save', text, url, title);
+          cleanup();
+        }));
+        toolbarEl.appendChild(makeBtn(iconChat(), '对话', c, function() {
+          sendAction('browser-add-to-chat', 'chat', text, url, title);
+          cleanup();
+        }));
+        // 笔记按钮（带下拉菜单）
+        (function() {
+          var nb = document.createElement('div');
+          nb.style.cssText = 'display:flex;align-items:center;gap:4px;padding:6px 11px;cursor:pointer;border-radius:8px;white-space:nowrap;font-size:13px;font-weight:500;line-height:1;transition:background 0.12s ease,color 0.12s ease;color:' + c.text + ';';
+          nb.innerHTML = iconNote() + '<span style="font-size:13px;">笔记</span><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-left:1px;"><path d="M6 9l6 6 6-6"/></svg>';
+          nb.addEventListener('mouseenter', function() { nb.style.background = c.hoverBg; });
+          nb.addEventListener('mouseleave', function() { nb.style.background = ''; });
+          nb.addEventListener('mousedown', function(ev) { ev.preventDefault(); ev.stopPropagation(); });
+
+          // 悬浮打开下拉菜单（防误触延迟）
+          var _openTimer = null;
+          nb.addEventListener('mouseenter', function() {
+            if (_openTimer) clearTimeout(_openTimer);
+            _openTimer = setTimeout(function() { showNoteDropdown(nb); }, 120);
+          });
+          nb.addEventListener('mouseleave', function() {
+            if (_openTimer) { clearTimeout(_openTimer); _openTimer = null; }
+            _dropdownCloseTimer = setTimeout(function() { removeNoteDropdown(); }, 250);
+          });
+          // 下拉菜单本身进入时不关闭
+          nb.addEventListener('click', function(ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            if (noteDropdownEl) { removeNoteDropdown(); }
+            else { showNoteDropdown(nb); }
+          });
+          toolbarEl.appendChild(nb);
+        })();
+
+        if (!document.body) return;
+        document.body.appendChild(toolbarEl);
+        var tbRect = toolbarEl.getBoundingClientRect();
+        var vw = window.innerWidth;
+        var top = rect.top - tbRect.height - 8;
+        var left = rect.left + rect.width / 2 - tbRect.width / 2;
+        if (top < 4) top = rect.bottom + 8;            // 上方空间不足 → 翻转到下方
+        if (left < 4) left = 4;                        // 水平夹取，不出界
+        if (left + tbRect.width > vw - 4) left = vw - tbRect.width - 4;
+        if (top < 4) top = 4;
+        toolbarEl.style.left = left + 'px';
+        toolbarEl.style.top = top + 'px';
+
+        // 滚动锁定（ima 理念）：工具条显示期间屏蔽底层滚动，下拉面板内部除外
+        scrollLockHandler = function(ev) {
+          if (noteDropdownEl && noteDropdownEl.contains(ev.target)) return;
+          ev.preventDefault();
+        };
+        window.addEventListener('wheel', scrollLockHandler, { passive: false });
+        window.addEventListener('touchmove', scrollLockHandler, { passive: false });
       }
 
       // ══════════════════════════════════════════════════════════
       // 右键事件监听
       // ══════════════════════════════════════════════════════════
+      // 右键（有选区）→ 隐藏工具条并回退原生菜单（不 preventDefault）
       document.addEventListener('contextmenu', function(e) {
-        try {
-          var sel = window.getSelection();
-          var text = (sel ? sel.toString() : '').trim();
-          if (!text) { cleanup(); return; }
-          e.preventDefault();
-          e.stopPropagation();
-          cleanup();
-
-          // 每次弹出时重新检测主题（用户可能在浏览期间切换了主题）
-          var theme = getTheme();
-          var c = PALETTE[theme];
-
-          // ── 遮罩层（点击关闭菜单） ──
-          overlayEl = document.createElement('div');
-          overlayEl.style.cssText = 'position:fixed;inset:0;z-index:2147483646;cursor:default;';
-          var timer = setTimeout(function() {
-            if (overlayEl) overlayEl.addEventListener('click', cleanup);
-          }, 100);
-          overlayEl.addEventListener('contextmenu', function(ev) {
-            ev.preventDefault(); clearTimeout(timer); cleanup();
-          });
-
-          // ── 菜单容器 ──
-          menuEl = document.createElement('div');
-          menuEl.style.cssText = ''
-            + 'position:fixed;z-index:2147483647;'
-            + 'background:' + c.bg + ';'
-            + 'border:1px solid ' + c.border + ';'
-            + 'border-radius:8px;padding:4px 0;min-width:200px;'
-            + 'box-shadow:' + c.shadow + ';'
-            + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            + 'font-size:12px;color:' + c.text + ';'
-            + 'backdrop-filter:blur(12px);'
-            + '-webkit-backdrop-filter:blur(12px);';
-          // 暗色模式下半透明底色增强层次感
-          if (theme === 'dark') {
-            menuEl.style.background = 'rgba(30,30,46,0.92)';
-          } else {
-            menuEl.style.background = 'rgba(255,255,255,0.88)';
-          }
-          menuEl.style.left = e.clientX + 'px';
-          menuEl.style.top = e.clientY + 'px';
-          menuEl.addEventListener('mousedown', function(ev) { ev.stopPropagation(); });
-          menuEl.addEventListener('contextmenu', function(ev) { ev.preventDefault(); });
-
-          // ── 构建菜单项 ──
-
-          // 菜单项 1: 存入素材库
-          var clipItem = makeItem('📦 存入 AiPen 素材库', '', c);
-          clipItem.addEventListener('mousedown', function(ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (pending) return;
-            pending = true;
-
-            var savedText = text;
-            var savedUrl = window.location.href;
-            var savedTitle = document.title;
-
-            // 双重通道并行：__TAURI__ IPC（快速）+ URL 导航（可靠回退）
-            try {
-              if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
-                window.__TAURI__.event.emit('browser-clip-selected-text', {
-                  text: savedText, url: savedUrl, title: savedTitle
-                });
-              }
-            } catch(ex) {}
-
-            var encoded = encodeClipPayload(savedText, savedUrl, savedTitle);
-            var navUrl = 'https://aipen-clip.internal/save/' + encoded;
-            setTimeout(function() {
-              try { window.location.href = navUrl; } catch(ex) {}
-            }, 0);
-
-            delayedCleanup();
-          });
-          menuEl.appendChild(clipItem);
-
-          // 菜单项 2: 添加到 AI 对话
-          var chatItem = makeItem('💬 添加到 AI 对话', '', c);
-          chatItem.addEventListener('mousedown', function(ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (pending) return;
-            pending = true;
-
-            var savedText = text;
-            var savedUrl = window.location.href;
-            var savedTitle = document.title;
-
-            try {
-              if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
-                window.__TAURI__.event.emit('browser-add-to-chat', {
-                  text: savedText, url: savedUrl, title: savedTitle
-                });
-              }
-            } catch(ex) {}
-
-            var encoded = encodeClipPayload(savedText, savedUrl, savedTitle);
-            var navUrl = 'https://aipen-clip.internal/chat/' + encoded;
-            setTimeout(function() {
-              try { window.location.href = navUrl; } catch(ex) {}
-            }, 0);
-
-            delayedCleanup();
-          });
-          menuEl.appendChild(chatItem);
-
-          // 菜单项 3: 添加到候选库
-          var candidateItem = makeItem('📋 添加到候选库', '', c);
-          candidateItem.addEventListener('mousedown', function(ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (pending) return;
-            pending = true;
-
-            var savedText = text;
-            var savedUrl = window.location.href;
-            var savedTitle = document.title;
-
-            try {
-              if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.emit) {
-                window.__TAURI__.event.emit('browser-add-to-candidate', {
-                  text: savedText, url: savedUrl, title: savedTitle
-                });
-              }
-            } catch(ex) {}
-
-            var encoded = encodeClipPayload(savedText, savedUrl, savedTitle);
-            var navUrl = 'https://aipen-clip.internal/candidate/' + encoded;
-            setTimeout(function() {
-              try { window.location.href = navUrl; } catch(ex) {}
-            }, 0);
-
-            delayedCleanup();
-          });
-          menuEl.appendChild(candidateItem);
-
-          // 分隔线
-          menuEl.appendChild(makeSeparator(c));
-
-          // 菜单项 4: 复制
-          var copyItem = makeItem('复制', 'Ctrl+C', c);
-          copyItem.addEventListener('mousedown', function(ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (pending) return;
-            pending = true;
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(text).catch(function(){});
-            }
-            delayedCleanup();
-          });
-          menuEl.appendChild(copyItem);
-
-          // 将遮罩和菜单挂载到 body
-          if (document.body) {
-            document.body.appendChild(overlayEl);
-            document.body.appendChild(menuEl);
-          }
-        } catch(ex) {
-          // 静默处理，避免影响页面原生右键
-          cleanup();
-        }
+        cleanup();
       }, true);
+
+      // 选区变化（键盘选择）→ 显示 / 隐藏工具条
+      document.addEventListener('selectionchange', function() {
+        if (pointerDown) return; // 鼠标拖选中途不处理，等 mouseup
+        var t = getSelectionText().trim();
+        if (t) showToolbar(); else cleanup();
+      });
+
+      // 鼠标按下（工具条外）→ 开始新选择，先隐藏工具条
+      document.addEventListener('mousedown', function(e) {
+        if (toolbarEl && toolbarEl.contains(e.target)) return;
+        pointerDown = true;
+        cleanup();
+      });
+
+      // 鼠标松开 → 选区稳定后显示工具条
+      document.addEventListener('mouseup', function(e) {
+        pointerDown = false;
+        if (e.button === 2) return; // 右键：回退原生菜单，不弹工具条
+        if (toolbarEl && toolbarEl.contains(e.target)) return;
+        setTimeout(function() {
+          var t = getSelectionText().trim();
+          if (t) showToolbar(); else cleanup();
+        }, 0);
+      });
+
+      // 滚动 / 缩放 / Esc → 隐藏工具条（显示期间的滚动已被滚动锁定拦截，下拉面板滚动除外）
+      window.addEventListener('scroll', function(ev) {
+        if (noteDropdownEl && noteDropdownEl.contains(ev.target)) return;
+        cleanup();
+      }, true);
+      window.addEventListener('resize', function() { cleanup(); });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') cleanup();
+      });
     } catch(e) {}
   }
 
   // 立即注册（初始化脚本在 DOM ready 之后执行，document.body 已存在）
-  __aipenSetupContextMenu();
+  __aipenSetupFloatingToolbar();
 
   // 双重保险：在 DOMContentLoaded 也注册一次（防御初始化时机差异）
   try {
-    document.addEventListener('DOMContentLoaded', __aipenSetupContextMenu);
+    document.addEventListener('DOMContentLoaded', __aipenSetupFloatingToolbar);
   } catch(e) {}
 })();
 "#;
@@ -2332,11 +2752,25 @@ pub async fn create_browser_webview(
                 decode_and_emit(&app_handle, encoded, "browser-add-to-chat", "__aipenReceiveChat", false);
                 return false;
             }
-            // 拦截 https://aipen-clip.internal/candidate/<base64> → 添加到候选库
-            if path.starts_with("/candidate/") {
-                let encoded = path.strip_prefix("/candidate/").unwrap_or("");
-                eprintln!("[Browser] 候选库导航，base64 长度: {}", encoded.len());
-                decode_and_emit(&app_handle, encoded, "browser-add-to-candidate", "__aipenReceiveCandidate", false);
+            // 拦截 https://aipen-clip.internal/note/<base64> → 添加到笔记（跳转文档模式创建新文档）
+            if path.starts_with("/note/") {
+                let encoded = path.strip_prefix("/note/").unwrap_or("");
+                eprintln!("[Browser] 笔记导航，base64 长度: {}", encoded.len());
+                decode_and_emit(&app_handle, encoded, "browser-add-to-note", "__aipenReceiveNote", false);
+                return false;
+            }
+            // 拦截 https://aipen-clip.internal/docs-request/<base64> → 文档列表请求
+            if path.starts_with("/docs-request/") {
+                let encoded = path.strip_prefix("/docs-request/").unwrap_or("");
+                eprintln!("[Browser] 文档列表请求导航，base64 长度: {}", encoded.len());
+                decode_and_emit(&app_handle, encoded, "browser-request-docs", "__aipenReceiveDocsRequest", false);
+                return false;
+            }
+            // 拦截 https://aipen-clip.internal/append-doc/<base64> → 追加到文档
+            if path.starts_with("/append-doc/") {
+                let encoded = path.strip_prefix("/append-doc/").unwrap_or("");
+                eprintln!("[Browser] 追加文档导航，base64 长度: {}", encoded.len());
+                decode_and_emit(&app_handle, encoded, "browser-append-to-doc", "__aipenReceiveAppendDoc", false);
                 return false;
             }
         }
@@ -2455,6 +2889,11 @@ pub async fn close_browser(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn hide_browser(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(wv) = app.get_webview_window("browser") {
+        // ★ 防遮盖：先移到屏幕外（park），再隐藏。
+        // 浏览器是主窗口的 owned window，owner 被激活时 OS 可能同步把它“复活”到顶层，
+        // 仅靠 SW_HIDE 会竞态失败、盖住文档/素材内容区；移到屏幕外后即便被复活也不可见。
+        // 恢复显示统一走 resize_browser_webview 重定位 + show_browser，故 park 不影响后续使用。
+        let _ = wv.set_position(tauri::LogicalPosition::new(-30000.0, -30000.0));
         wv.hide().map_err(|e| format!("隐藏浏览器失败: {}", e))?;
     }
     Ok(())
@@ -2470,6 +2909,18 @@ pub async fn show_browser(app: tauri::AppHandle) -> Result<(), String> {
     }
     if let Some(wv) = app.get_webview_window("browser") {
         wv.show().map_err(|e| format!("显示浏览器失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn emit_to_browser(app: tauri::AppHandle, event: String, payload: serde_json::Value) -> Result<(), String> {
+    if let Some(wv) = app.get_webview_window("browser") {
+        // 双通道：emit 事件 + eval 全局函数，确保浏览器能收到
+        let _ = wv.emit(&event, &payload);
+        let payload_json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
+        let js = format!("window.__aipenReceiveDocs && window.__aipenReceiveDocs({});", payload_json);
+        let _ = wv.eval(&js);
     }
     Ok(())
 }

@@ -19,6 +19,13 @@ const compareStore = useCompareStore()
 const proofreadStore = useProofreadStore()
 const { confirm } = useConfirm()
 
+const props = defineProps<{
+  /** 隐藏批注 section，仅保留比对/校对 */
+  hideComments?: boolean;
+  /** 隐藏校对 section，仅保留批注/比对 */
+  hideProofread?: boolean;
+}>();
+
 const emit = defineEmits<{
   jump: [commentId: string]
   jumpProofread: [id: string]
@@ -35,7 +42,7 @@ function switchTab(tab: 'comment' | 'compare' | 'proofread') {
 }
 
 // ── 三 section 存在性 ──
-const hasProofread = computed(() => proofreadStore.hasItems)
+const hasProofread = computed(() => proofreadStore.hasItems && !props.hideProofread)
 /** 同时存在多个 section 时才显示 tab 栏，否则只显示单标题 */
 const showTabs = computed(() => {
   const n = (hasComments.value ? 1 : 0) + (hasCompare.value ? 1 : 0) + (hasProofread.value ? 1 : 0)
@@ -61,7 +68,7 @@ const sortedComments = computed(() => {
 
 const liveCount = computed(() => sortedComments.value.filter(c => !c.orphan).length)
 const orphanCount = computed(() => sortedComments.value.length - liveCount.value)
-const hasComments = computed(() => sortedComments.value.length > 0)
+const hasComments = computed(() => sortedComments.value.length > 0 && !props.hideComments)
 const hasCompare = computed(() => compareStore.hasEntries)
 const hasAny = computed(() => hasComments.value || hasCompare.value || hasProofread.value)
 

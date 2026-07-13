@@ -318,6 +318,20 @@ const props = defineProps<{
   readonly?: boolean
   editMode?: 'document' | 'material'
   materialId?: string
+  /** 素材卡片标题（单素材=来源/标题，标签视图=标签名） */
+  materialTitle?: string
+  /** 素材卡片来源链接（仅单素材视图有） */
+  materialSource?: string
+  /** 当前是否处于某个真实标签上下文中（用于决定显示「从此标签移除」） */
+  inTag?: boolean
+  /** true=卡片自带滚动容器（单素材视图）；false=卡片内嵌到外部列表，由父级滚动（标签多卡片视图） */
+  materialScroll?: boolean
+  /** 素材卡片正文使用的字体（CSS font-family 值），不传则用默认 */
+  materialFontFamily?: string
+  /** 素材卡片正文字号（CSS 长度，如 '16px'），不传则用默认 */
+  materialFontSize?: string
+  /** 素材收藏时间（已格式化的字符串），显示在来源链接后 */
+  materialTime?: string
   autoShowOutline?: boolean
   /** 外部搜索词：打开文档/素材后自动高亮并跳转到首个命中位置 */
   highlightQuery?: string
@@ -326,10 +340,13 @@ const emit = defineEmits<{
   'update:modelValue': [value: any] // ProseMirror JSON 或 纯文本字符串
   'clip-material': [text: string]
   'insert-to-chat': [text: string]
-  'delete-material': [selectionStart: number]
-  'remove-from-tag': [selectionStart: number]
+  'delete-material': [selectionStart: string | number]
+  'remove-from-tag': [selectionStart: string | number]
+  'open-browser': [url: string]
   'toggle-fullscreen': []
   'selection-change': [selectedLength: number]
+  'material-add-to-note': [text: string]
+  'material-append-to-doc': [payload: { docId: string; text: string }]
 }>()
 
 const docStore = useDocumentStore()
@@ -738,6 +755,24 @@ function printDocument() {
   if (ce) ce.scrollTop = 0
   // 延迟打印让 DOM 更新生效
   requestAnimationFrame(() => window.print())
+}
+
+// ── 素材卡片头部操作 ──
+/** 复制：有选区复制选区，否则复制整篇素材纯文本 */
+function onCardCopy() {
+  const ed = editor.value
+  if (!ed) return
+  const { from, to } = ed.state.selection
+  const text = from !== to ? ed.state.doc.textBetween(from, to, '\n') : ed.getText()
+  if (text) navigator.clipboard.writeText(text).catch(() => {})
+}
+/** 从素材库删除（优先按 known materialId 定位，兜底用选区位置） */
+function onCardDelete() {
+  emit('delete-material', props.materialId ?? editor.value?.state.selection.from ?? 0)
+}
+/** 从当前标签移除（优先按 known materialId 定位，兜底用选区位置） */
+function onCardRemoveFromTag() {
+  emit('remove-from-tag', props.materialId ?? editor.value?.state.selection.from ?? 0)
 }
 function toggleSearch() {
   searchOpen.value = !searchOpen.value
@@ -1185,7 +1220,7 @@ function textOffsetToDocPos(ed: any, targetOffset: number): number {
 async function bytesToDataUrl(bytes: Uint8Array | number[], ext: string): Promise<string> {
   const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' }
   const mime = mimeMap[ext] || 'image/png'
-  const blob = new Blob([bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)], { type: mime })
+  const blob = new Blob([new Uint8Array(bytes)], { type: mime })
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onloadend = () => resolve(reader.result as string)
@@ -1274,7 +1309,7 @@ const editor = useEditor({
     TableCell,
     TableHeader,
     LocalImage.configure({ inline: false, allowBase64: false }),
-    Placeholder.configure({ placeholder: '开始写作...' }),
+    Placeholder.configure({ placeholder: '把这一页，交给灵感...' }),
     TextStyle,
     FontFamily,
     Color,
@@ -1492,6 +1527,12 @@ const editor = useEditor({
         return false
       },
       contextmenu: (_view, event) => {
+        // 素材模式：回退浏览器/系统原生右键菜单，不弹自定义菜单
+        //（选中动作已由悬浮工具条接管，见 showMatToolbar）
+        if (props.editMode === 'material') {
+          hideMatToolbar()
+          return false
+        }
         event.preventDefault()
         const ed = editor.value
         if (!ed) return false
@@ -1721,13 +1762,186 @@ function onGlobalKeydown(e: KeyboardEvent) {
     execStrike()
   }
 }
+// ── 素材选中悬浮工具条（仅 editMode==='material'；ima 风格） ──
+const matTbShow = ref(false)
+const matTbX = ref(0)
+const matTbY = ref(0)
+const matTbPositioned = ref(false)
+const matToolbarRef = ref<HTMLElement | null>(null)
+let matPointerDown = false
+let matSelDebounce: number | null = null
+let matScrollLockHandler: ((ev: Event) => void) | null = null // 滚动锁定回调引用
+const matNoteShow = ref(false) // 笔记下拉面板
+const matNoteDropdownRef = ref<HTMLElement | null>(null)
+
+function matRemoveScrollLock() {
+  if (matScrollLockHandler) {
+    window.removeEventListener('wheel', matScrollLockHandler, { passive: false } as any)
+    window.removeEventListener('touchmove', matScrollLockHandler, { passive: false } as any)
+    matScrollLockHandler = null
+  }
+}
+
+function matAddScrollLock() {
+  matRemoveScrollLock()
+  matScrollLockHandler = function (ev: Event) {
+    // 笔记下拉面板内部滚动放行
+    const target = ev.target as HTMLElement | null
+    if (target && matNoteDropdownRef.value && matNoteDropdownRef.value.contains(target)) return
+    ev.preventDefault()
+  }
+  window.addEventListener('wheel', matScrollLockHandler, { passive: false })
+  window.addEventListener('touchmove', matScrollLockHandler, { passive: false })
+}
+
+function hideMatToolbar() {
+  matNoteShow.value = false
+  matNoteCancelHide()
+  matRemoveScrollLock()
+  matTbShow.value = false
+  matTbPositioned.value = false
+}
+
+/** 判断当前浏览器选区是否落在本编辑器 DOM 内（多素材卡片隔离） */
+function matSelInThisEditor(sel: Selection | null): boolean {
+  const ed = editor.value
+  if (!ed || !sel || sel.rangeCount === 0) return false
+  const dom = ed.view.dom as HTMLElement
+  const anchor = sel.anchorNode
+  return !!anchor && dom.contains(anchor)
+}
+
+async function showMatToolbar() {
+  if (props.editMode !== 'material') return
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hideMatToolbar(); return }
+  const selText = sel.toString().trim()
+  if (!selText) { hideMatToolbar(); return }
+  if (!matSelInThisEditor(sel)) { hideMatToolbar(); return }
+  const rect = sel.getRangeAt(0).getBoundingClientRect()
+  if (!rect || (rect.width === 0 && rect.height === 0)) { hideMatToolbar(); return }
+  // 供 execCtxMenu* 复用选中文本
+  ctxMenuSelText.value = selText
+  matTbPositioned.value = false
+  matTbX.value = rect.left
+  matTbY.value = rect.top
+  matTbShow.value = true
+  await nextTick()
+  const el = matToolbarRef.value
+  if (!el) return
+  const w = el.offsetWidth
+  const h = el.offsetHeight
+  const vw = window.innerWidth
+  let left = rect.left + rect.width / 2 - w / 2
+  let top = rect.top - h - 8
+  if (top < 4) top = rect.bottom + 8            // 上方空间不足 → 翻转到下方
+  if (left < 4) left = 4                          // 水平夹取，不出界
+  if (left + w > vw - 4) left = vw - w - 4
+  if (top < 4) top = 4
+  matTbX.value = left
+  matTbY.value = top
+  matTbPositioned.value = true
+  matAddScrollLock() // 锁定底层滚动（与浏览器工具栏行为一致）
+}
+
+function onMatSelectionChange() {
+  if (props.editMode !== 'material') return
+  if (matPointerDown) return // 鼠标拖选中途不处理，等 mouseup
+  if (matSelDebounce) clearTimeout(matSelDebounce)
+  matSelDebounce = window.setTimeout(() => {
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && sel.toString().trim() && matSelInThisEditor(sel)) showMatToolbar()
+    else hideMatToolbar()
+  }, 120)
+}
+function onMatMouseDown(e: MouseEvent) {
+  if (props.editMode !== 'material') return
+  const el = matToolbarRef.value
+  if (el && el.contains(e.target as Node)) return // 点工具条内部不处理
+  const ndd = matNoteDropdownRef.value
+  if (ndd && ndd.contains(e.target as Node)) return // 点笔记下拉内部不处理
+  matPointerDown = true
+  hideMatToolbar()
+}
+function onMatMouseUp(e: MouseEvent) {
+  if (props.editMode !== 'material') return
+  matPointerDown = false
+  if (e.button === 2) return // 右键：回退原生菜单，不弹工具条
+  const el = matToolbarRef.value
+  if (el && el.contains(e.target as Node)) return
+  setTimeout(() => {
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && sel.toString().trim() && matSelInThisEditor(sel)) showMatToolbar()
+    else hideMatToolbar()
+  }, 0)
+}
+function onMatScrollOrResize(e?: Event) {
+  if (props.editMode !== 'material') return
+  // 笔记下拉面板内部滚动不隐藏工具栏
+  if (e && e.target && matNoteDropdownRef.value?.contains(e.target as Node)) return
+  hideMatToolbar() // 素材：滚动即隐藏（§2.5，最简稳妥）
+}
+function onMatKeydown(e: KeyboardEvent) {
+  if (props.editMode !== 'material') return
+  if (e.key === 'Escape') hideMatToolbar()
+}
+
+// 工具条按钮：复用现有 execCtxMenu* 内部逻辑，再收起工具条
+function matCopy() { execCtxMenuCopy(); hideMatToolbar() }
+function matChat() { execCtxMenuInsertToChat(); hideMatToolbar() }
+function matCandidate() { execCtxMenuAddToCandidate(); hideMatToolbar() }
+function matCompare() { execCtxMenuAddToCompare(); hideMatToolbar() }
+let matNoteHideTimer: ReturnType<typeof setTimeout> | null = null
+function matNoteScheduleHide() {
+  matNoteCancelHide()
+  matNoteHideTimer = setTimeout(() => {
+    matNoteShow.value = false
+  }, 150)
+}
+function matNoteCancelHide() {
+  if (matNoteHideTimer) { clearTimeout(matNoteHideTimer); matNoteHideTimer = null }
+}
+function matNoteCreateNew() {
+  if (ctxMenuSelText.value) {
+    emit('material-add-to-note', ctxMenuSelText.value)
+  }
+  hideMatToolbar()
+}
+function matNoteAppendToDoc(docId: string) {
+  if (ctxMenuSelText.value) {
+    emit('material-append-to-doc', { docId, text: ctxMenuSelText.value })
+  }
+  hideMatToolbar()
+}
+/** 笔记下拉显示的文档列表（下拉打开时实时获取） */
+const matNoteDocList = computed(() => {
+  return (docStore.documents || []).map(d => ({ id: d.id, title: d.title }))
+})
+
 onMounted(() => {
   window.addEventListener('comment-jump', onCommentJumpFromTooltip)
   document.addEventListener('keydown', onGlobalKeydown)
+  if (props.editMode === 'material') {
+    document.addEventListener('selectionchange', onMatSelectionChange)
+    document.addEventListener('mousedown', onMatMouseDown, true)
+    document.addEventListener('mouseup', onMatMouseUp, true)
+    window.addEventListener('scroll', onMatScrollOrResize, true)
+    window.addEventListener('resize', onMatScrollOrResize)
+    document.addEventListener('keydown', onMatKeydown)
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('comment-jump', onCommentJumpFromTooltip)
   document.removeEventListener('keydown', onGlobalKeydown)
+  if (props.editMode === 'material') {
+    document.removeEventListener('selectionchange', onMatSelectionChange)
+    document.removeEventListener('mousedown', onMatMouseDown, true)
+    document.removeEventListener('mouseup', onMatMouseUp, true)
+    window.removeEventListener('scroll', onMatScrollOrResize, true)
+    window.removeEventListener('resize', onMatScrollOrResize)
+    document.removeEventListener('keydown', onMatKeydown)
+    if (matSelDebounce) clearTimeout(matSelDebounce)
+  }
 })
 
 // ── 工具栏操作 ──
@@ -2256,9 +2470,10 @@ function btnClass(active: boolean) {
 </script>
 
 <template>
-  <div class="relative flex flex-col h-full min-h-0 rich-editor-wrapper" :class="{ 'is-material': editMode === 'material' }" :style="{ backgroundColor: contentBg }">
-    <!-- 工具栏 -->
+  <div class="relative flex flex-col h-full min-h-0 rich-editor-wrapper" :class="{ 'is-material': editMode === 'material' }" :style="{ backgroundColor: contentBg, '--mat-font-family': materialFontFamily || undefined, '--mat-font-size': materialFontSize || undefined }">
+    <!-- 工具栏（只读素材卡片隐藏，避免每个卡片都带一条工具栏） -->
     <div
+      v-if="!(editMode === 'material' && readonly)"
       class="rich-toolbar flex items-center gap-0.5 px-1.5 py-1 border-b shrink-0 flex-wrap select-none"
       :style="{ backgroundColor: tbBg, borderColor: tbBorder }"
     >
@@ -2664,12 +2879,42 @@ function btnClass(active: boolean) {
         <span>✅ 未发现问题</span>
       </div>
 
-      <!-- TipTap 编辑区 -->
-      <EditorContent :editor="editor" class="flex-1 overflow-y-auto rich-content" :style="{ color: contentText }" />
+      <!-- 素材卡片视图：纸卡外壳 + 头部操作栏 -->
+      <template v-if="editMode === 'material'">
+        <!-- materialScroll=true: 单素材视图，自带滚动容器；false: 内嵌到外部多卡片列表 -->
+        <div :class="materialScroll ? 'material-card-scroll flex-1 min-h-0 overflow-y-auto' : 'contents'">
+          <div class="material-card">
+            <div class="material-card-head">
+              <div class="material-card-titles">
+                <div class="material-card-title" :title="materialTitle">{{ materialTitle || '素材' }}</div>
+                <div v-if="materialSource || materialTime" class="material-card-source" :title="materialSource">
+                  <span
+                    v-if="materialSource"
+                    class="material-card-link"
+                    @click="emit('open-browser', materialSource)"
+                  >🔗 {{ materialSource }}</span>
+                  <span v-if="materialTime" class="material-card-time">🕒 {{ materialTime }}</span>
+                </div>
+              </div>
+              <div class="material-card-actions">
+                <button class="mc-btn" title="复制素材内容（有选区则复制选区）" @mousedown.prevent="onCardCopy">📋 复制</button>
+                <button v-if="inTag" class="mc-btn" title="从当前标签移除该素材" @mousedown.prevent="onCardRemoveFromTag">⬅ 从此标签移除</button>
+                <button class="mc-btn mc-btn-danger" title="从素材库删除该素材" @mousedown.prevent="onCardDelete">🗑 删除</button>
+              </div>
+            </div>
+            <EditorContent :editor="editor" class="rich-content material-card-body" :style="{ color: contentText }" />
+          </div>
+        </div>
+      </template>
 
-      <!-- 批注面板（CandidatePanel 式右侧抽屉，内联 flex 子节点挤占编辑器空间） -->
+      <!-- 文档/其他视图：原生编辑区 -->
+      <template v-else>
+        <EditorContent :editor="editor" class="flex-1 overflow-y-auto rich-content" :style="{ color: contentText }" />
+      </template>
+
+      <!-- 批注面板：文档模式 + 单素材视图此处渲染；tag view 由 EditorView 外层统一挂载 -->
       <CommentListPanel
-        v-if="editMode !== 'material'"
+        v-if="editMode !== 'material' || materialScroll"
         @jump="onCommentListJump"
         @jumpProofread="onProofreadJump"
         @replaceProofread="onProofreadReplace"
@@ -2779,6 +3024,63 @@ function btnClass(active: boolean) {
     <!-- 透明遮罩，点击任意处关闭菜单 -->
     <div v-if="ctxMenuShow" class="ctx-overlay" @mousedown="closeCtxMenu" @contextmenu.prevent="closeCtxMenu" />
   </Teleport>
+
+    <!-- 素材选中悬浮工具条 (Teleport to body，ima 风格) -->
+    <Teleport to="body">
+      <div
+        v-if="matTbShow && editMode === 'material'"
+        ref="matToolbarRef"
+        class="mat-float-toolbar"
+        :class="{ 'is-dark': isDark }"
+        :style="{ left: matTbX + 'px', top: matTbY + 'px', visibility: matTbPositioned ? 'visible' : 'hidden' }"
+        @mousedown.prevent
+        @contextmenu.prevent
+      >
+        <div class="mat-tb-btn" @click.stop="matCopy">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>复制</span>
+        </div>
+        <div class="mat-tb-btn" @click.stop="matChat">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>对话</span>
+        </div>
+        <div class="mat-tb-btn" @click.stop="matCandidate">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.3"/><circle cx="4.5" cy="12" r="1.3"/><circle cx="4.5" cy="18" r="1.3"/></svg>
+          <span>候选</span>
+        </div>
+        <div class="mat-tb-btn" @click.stop="matCompare">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 3 21 7 17 11"/><path d="M21 7H8"/><polyline points="7 21 3 17 7 13"/><path d="M3 17h13"/></svg>
+          <span>比对</span>
+        </div>
+        <!-- 笔记按钮 + 下拉面板（hover 触发） -->
+        <div class="mat-tb-btn" style="position:relative;"
+          @mouseenter="matNoteShow = true"
+          @mouseleave="matNoteScheduleHide"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.17 2H2.83A.83.83 0 0 0 2 2.83v16.34c0 .46.37.83.83.83H12l10-10V2.83a.83.83 0 0 0-.83-.83z"/><path d="M12 2v8h8"/></svg>
+          <span>笔记</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: matNoteShow ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }"><polyline points="6 9 12 15 18 9"/></svg>
+          <!-- 笔记下拉面板 -->
+          <div v-if="matNoteShow" ref="matNoteDropdownRef"
+            class="mat-note-dropdown" :class="{ 'is-dark': isDark }"
+            @mouseenter="matNoteCancelHide"
+            @mouseleave="matNoteScheduleHide"
+            @click.stop
+          >
+            <div class="mat-note-item" @click.stop="matNoteCreateNew">
+              <span style="font-size:15px;">📝</span>
+              <span>新建笔记</span>
+            </div>
+            <div class="mat-note-divider" />
+            <div v-if="matNoteDocList.length > 0" class="mat-note-section-header">追加到文档</div>
+            <div v-for="doc in matNoteDocList" :key="doc.id" class="mat-note-item mat-note-doc-item" @click.stop="matNoteAppendToDoc(doc.id)">
+              {{ doc.title }}
+            </div>
+            <div v-if="matNoteDocList.length === 0" class="mat-note-empty">暂无文档，请先创建</div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -2932,13 +3234,127 @@ function btnClass(active: boolean) {
 .rich-content .ProseMirror p { margin: 0.3em 0; }
 
 /* ── 素材卡片视图 ── */
+/* 滚动容器（替代原 .rich-content 的 overflow） */
+.material-card-scroll {
+  padding: 22px 14px 44px;
+}
+/* 纸卡本体 */
+.material-card {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  box-shadow: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.2s ease;
+}
+.material-card:hover {
+  border-color: rgba(99, 102, 241, 0.45);
+}
+.dark .material-card {
+  background: #1c1f2e;
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+}
+.dark .material-card:hover {
+  border-color: rgba(137, 180, 250, 0.5);
+}
+/* 卡片头部（标题 + 来源 + 操作） */
+.material-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px 12px 20px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.06), rgba(99, 102, 241, 0));
+}
+.dark .material-card-head {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(137, 180, 250, 0.07), rgba(137, 180, 250, 0));
+}
+.material-card-titles { min-width: 0; }
+.material-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dark .material-card-title { color: #cdd6f4; }
+.material-card-source {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.material-card-source > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.material-card-link {
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.material-card-link:hover {
+  color: #6366f1;
+  text-decoration: underline;
+}
+.dark .material-card-link:hover {
+  color: #89b4fa;
+}
+.material-card-time { flex-shrink: 0; }
+.dark .material-card-source { color: #7f849c; }
+.material-card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.mc-btn {
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.mc-btn:hover { background: #f1f5f9; color: #1e293b; border-color: rgba(15, 23, 42, 0.18); }
+.dark .mc-btn { background: #262a3b; border-color: rgba(255, 255, 255, 0.1); color: #cdd6f4; }
+.dark .mc-btn:hover { background: #313650; color: #f8fafc; }
+.mc-btn-danger:hover { background: #fef2f2; color: #dc2626; border-color: rgba(220, 38, 38, 0.3); }
+.dark .mc-btn-danger:hover { background: #3b2326; color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
+
+/* 正文区：宽度/居中由卡片容器控制，这里只负责内边距与字体 */
 .rich-editor-wrapper.is-material .ProseMirror {
-  font-family: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family: var(--mat-font-family, 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif);
+  font-size: var(--mat-font-size, 16px);
   line-height: 1.85;
   padding: 1.5rem 2rem;
-  max-width: 860px;
+}
+
+/* 标签多卡片列表（父级滚动，每张素材一个内嵌卡片） */
+.material-list-scroll { padding: 0; }
+.material-list-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 14px 44px;
+  max-width: 920px;
   margin: 0 auto;
 }
+/* 内嵌卡片：取消 RichEditor 根节点的 100% 高度，改为按内容自适应，并强制占满列表宽度 */
+.material-card-host.rich-editor-wrapper { height: auto; width: 100%; align-self: stretch; }
 /* 卡片标题 h2 */
 .rich-editor-wrapper.is-material .ProseMirror h2 {
   font-size: 1.05em;
@@ -3322,6 +3738,116 @@ function btnClass(active: boolean) {
   position: fixed;
   inset: 0;
   z-index: 9999;
+}
+
+/* ── 素材选中悬浮工具条（ima 风格：毛玻璃胶囊 + 线性图标） ── */
+.mat-float-toolbar {
+  position: fixed;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  color: #1f2937;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+.mat-float-toolbar.is-dark {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(38, 38, 50, 0.94);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.35);
+  color: #c0caf5;
+}
+.mat-tb-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background 0.12s ease;
+}
+.mat-tb-btn svg { flex-shrink: 0; }
+.mat-tb-btn:hover { background: rgba(0, 0, 0, 0.06); }
+.mat-float-toolbar.is-dark .mat-tb-btn:hover { background: rgba(255, 255, 255, 0.10); }
+
+/* ── 笔记下拉面板（素材工具栏，不透明） ── */
+.mat-note-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #ffffff;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  color: #1f2937;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  z-index: 10002;
+}
+.mat-note-dropdown.is-dark {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: #2a2a3c;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.35);
+  color: #c0caf5;
+}
+.mat-note-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s ease;
+}
+.mat-note-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.mat-note-dropdown.is-dark .mat-note-item:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+.mat-note-divider {
+  height: 1px;
+  margin: 3px 7px;
+  background: rgba(0, 0, 0, 0.08);
+}
+.mat-note-dropdown.is-dark .mat-note-divider {
+  background: rgba(255, 255, 255, 0.10);
+}
+.mat-note-section-header {
+  padding: 5px 10px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.5;
+}
+.mat-note-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  opacity: 0.45;
+  text-align: center;
 }
 
 /* ── 表格格选面板 ── */

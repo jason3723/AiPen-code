@@ -158,6 +158,9 @@ pub fn run() {
             let images_dir = local_dir.join("images");
             std::fs::create_dir_all(&images_dir)
                 .expect("无法创建图片目录");
+            let favicon_dir = local_dir.join("favicon_cache");
+            std::fs::create_dir_all(&favicon_dir)
+                .expect("无法创建 favicon 缓存目录");
 
             let db_path = app_dir.join("aipen.db");
             eprintln!("[AiPen] 数据库路径: {:?}", db_path);
@@ -285,6 +288,8 @@ pub fn run() {
             commands::add_bookmark,
             commands::list_bookmarks,
             commands::delete_bookmark,
+            commands::get_favicon_cache_path,
+            commands::fetch_favicon,
             commands::create_browser_webview,
             commands::navigate_browser,
             commands::navigate_browser_back,
@@ -294,6 +299,7 @@ pub fn run() {
             commands::close_browser,
             commands::hide_browser,
             commands::show_browser,
+            commands::emit_to_browser,
             commands::set_browser_theme,
             commands::print_document,
             commands::get_tutorial_markdown,

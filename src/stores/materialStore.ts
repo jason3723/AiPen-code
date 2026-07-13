@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { textToDocJson } from "../utils/textToDocJson";
 
@@ -24,7 +24,7 @@ export interface Material {
 // ─── 辅助函数 ────────────────────────────────────────────────
 
 /** 从素材 content（DB 中的字符串）解析为 ProseMirror JSON 文档 */
-function parseMaterialContent(raw: string): any {
+export function parseMaterialContent(raw: string): any {
   if (!raw) return { type: 'doc', content: [] }
   // 尝试 ProseMirror JSON
   try {
@@ -49,8 +49,37 @@ function extractMaterialText(content: string): string {
   return content
 }
 
+// ─── 素材阅读字体设置（localStorage 持久化，作用于素材卡片正文） ───
+export const MATERIAL_FONT_OPTIONS = [
+  { label: '微软雅黑', value: "'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif" },
+  { label: '宋体', value: "'SimSun', '宋体', 'Songti SC', serif" },
+  { label: '黑体', value: "'SimHei', '黑体', 'Heiti SC', sans-serif" },
+  { label: '楷体', value: "'KaiTi', '楷体', 'Kaiti SC', serif" },
+  { label: 'Arial', value: "Arial, Helvetica, sans-serif" },
+  { label: '系统默认', value: "system-ui, -apple-system, 'Segoe UI', sans-serif" },
+]
+export const MATERIAL_FONT_SIZE_OPTIONS = ['12px', '14px', '16px', '18px', '20px', '22px', '24px', '28px']
+
+const MAT_FONT_KEY = 'aipen_material_font_family'
+const MAT_SIZE_KEY = 'aipen_material_font_size'
+const DEFAULT_MAT_FONT = MATERIAL_FONT_OPTIONS[0].value
+const DEFAULT_MAT_SIZE = '16px'
+
+export const materialFontFamily = ref<string>(DEFAULT_MAT_FONT)
+export const materialFontSize = ref<string>(DEFAULT_MAT_SIZE)
+try {
+  const f = localStorage.getItem(MAT_FONT_KEY)
+  if (f) materialFontFamily.value = f
+} catch { /* noop */ }
+try {
+  const s = localStorage.getItem(MAT_SIZE_KEY)
+  if (s) materialFontSize.value = s
+} catch { /* noop */ }
+watch(materialFontFamily, (v) => { try { localStorage.setItem(MAT_FONT_KEY, v) } catch { /* noop */ } })
+watch(materialFontSize, (v) => { try { localStorage.setItem(MAT_SIZE_KEY, v) } catch { /* noop */ } })
+
 /** DB 存的是 UTC 时间（"2026-07-03 16:58:00"），转换为本地时间显示 */
-function formatMaterialTime(ts: string | null | undefined): string {
+export function formatMaterialTime(ts: string | null | undefined): string {
   if (!ts) return '';
   try {
     // 归一化为 ISO 8601 UTC 格式："2026-07-03 16:58:00" → "2026-07-03T16:58:00Z"
@@ -85,6 +114,7 @@ export interface Bookmark {
   id: string;
   url: string;
   title: string;
+  favicon?: string | null;
   created_at: string;
 }
 
@@ -533,7 +563,9 @@ export const useMaterialStore = defineStore("material", () => {
   async function loadBookmarks() {
     loading.value.bookmarks = true;
     try {
-      bookmarks.value = await invoke<Bookmark[]>("list_bookmarks");
+      const list = await invoke<Bookmark[]>("list_bookmarks");
+      bookmarks.value = list.map(b => ({ ...b, favicon: null }));
+      loadBookmarkFavicons();
     } catch (e) {
       console.error("加载书签失败:", e);
     } finally {
@@ -541,9 +573,53 @@ export const useMaterialStore = defineStore("material", () => {
     }
   }
 
+  async function loadBookmarkFavicons() {
+    for (let i = 0; i < bookmarks.value.length; i++) {
+      const bm = bookmarks.value[i];
+      try {
+        const favicon = await invoke<string | null>("get_favicon_cache_path", { url: bm.url });
+        if (favicon) {
+          bookmarks.value[i] = { ...bm, favicon };
+          console.log(`[Favicon] 缓存命中: ${bm.url}`);
+        }
+      } catch (e) {
+        console.error(`[Favicon] get_cache error for ${bm.url}:`, e);
+      }
+    }
+  }
+
+  async function fetchBookmarkFavicon(bmId: string) {
+    const idx = bookmarks.value.findIndex(b => b.id === bmId);
+    if (idx === -1) return;
+    const bm = bookmarks.value[idx];
+    if (bm.favicon) return;
+    try {
+      console.log(`[Favicon] 开始下载: ${bm.url}`);
+      const favicon = await invoke<string | null>("fetch_favicon", { url: bm.url });
+      if (favicon) {
+        bookmarks.value[idx] = { ...bm, favicon };
+        console.log(`[Favicon] 下载成功: ${bm.url} (${favicon.length} chars)`);
+      } else {
+        console.log(`[Favicon] 下载失败（无图标）: ${bm.url}`);
+      }
+    } catch (e) {
+      console.error(`[Favicon] fetch error for ${bm.url}:`, e);
+    }
+  }
+
+  function clearBookmarkFavicon(bmId: string) {
+    const idx = bookmarks.value.findIndex(b => b.id === bmId);
+    if (idx === -1) return;
+    const bm = bookmarks.value[idx];
+    if (bm.favicon) {
+      console.warn(`[Favicon] img加载失败，清除: ${bm.url}`);
+      bookmarks.value[idx] = { ...bm, favicon: null };
+    }
+  }
+
   async function addBookmark(url: string, title: string): Promise<Bookmark> {
     const bm = await invoke<Bookmark>("add_bookmark", { url, title });
-    bookmarks.value.unshift(bm);
+    bookmarks.value.unshift({ ...bm, favicon: null });
     return bm;
   }
 
@@ -630,6 +706,8 @@ export const useMaterialStore = defineStore("material", () => {
     loadBookmarks,
     addBookmark,
     deleteBookmark,
+    fetchBookmarkFavicon,
+    clearBookmarkFavicon,
     init,
   };
 });

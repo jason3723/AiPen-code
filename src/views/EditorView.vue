@@ -18,6 +18,9 @@ import type { ComposeRecipe, ComposeProgress, ComposePhase } from "../types/comp
 import { useDocumentStore } from "../stores/document";
 import { useExportSettingsStore } from "../stores/exportSettings";
 import { useMaterialStore } from "../stores/materialStore";
+import type { Material } from "../stores/materialStore";
+import { parseMaterialContent } from "../stores/materialStore";
+import { materialFontFamily, materialFontSize, formatMaterialTime } from "../stores/materialStore";
 import { storeToRefs } from "pinia";
 import { exportToWord } from "../utils/exportWord";
 import { useConfirm } from "../composables/useConfirm";
@@ -26,6 +29,7 @@ import { textToDocJson } from "../utils/textToDocJson";
 import MaterialPanel from "../components/MaterialPanel.vue";
 import SearchPanel from "../components/SearchPanel.vue";
 import CandidatePanel from "../components/CandidatePanel.vue";
+import CommentListPanel from "../components/CommentListPanel.vue";
 import MaterialClipDialog from "../components/MaterialClipDialog.vue";
 import FeedbackDialog from "../components/FeedbackDialog.vue";
 import { useTheme } from "../stores/theme";
@@ -97,6 +101,24 @@ const titleInput = ref("");
 // ── 侧栏折叠 ──
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(false);
+
+// F3: 任意模块"加入比对"后，自动展开右侧抽屉（沿用文档模块"加入比对 → 面板打开"行为）
+watch(
+  () => compareStore.panelOpen,
+  (open) => {
+    if (open) rightCollapsed.value = false;
+  },
+);
+
+// "对话"按钮（素材工具栏/候选面板）切换 Chat Tab 时，自动展开右侧栏
+watch(
+  () => store.sidebarTab,
+  (tab) => {
+    if (tab === 'chat') rightCollapsed.value = false;
+  },
+);
+
+
 
 // ── 侧栏右键菜单 ──
 const ctxMenu = ref<{ show: boolean; x: number; y: number; type: 'system' | 'text'; selectedText?: string }>({ show: false, x: 0, y: 0, type: 'system' });
@@ -292,8 +314,51 @@ const editMode = computed(() => {
   if (leftSubTab.value === 'materials' && (materialStore.currentMaterialId || materialStore.currentTagDocumentId)) return 'material' as const;
   return 'document' as const;
 });
+// 素材模式下、且未选中任何标签/素材时，显示「素材模式」引导占位
+const showMaterialEmpty = computed(
+  () =>
+    leftSubTab.value === 'materials' &&
+    !materialStore.currentTagDocumentId &&
+    !materialStore.currentMaterialId,
+);
 /** 传给 Editor 组件的 editMode（排除 webview，此时组件不渲染） */
 const editorEditMode = computed(() => editMode.value === 'webview' ? undefined : editMode.value);
+
+// 素材卡片头部展示信息（标题/来源/是否处于真实标签上下文）
+const materialCardTitle = computed(() => {
+  if (materialStore.currentMaterialId) {
+    const m = materialStore.currentMaterial;
+    return m ? (m.source_title || m.title || '素材') : '素材';
+  }
+  const tagId = materialStore.currentTagDocumentId;
+  if (tagId && tagId !== '__uncategorized__') {
+    return materialStore.tags.find(t => t.id === tagId)?.name ?? '标签素材';
+  }
+  return '素材';
+});
+const materialCardSource = computed(() => {
+  if (materialStore.currentMaterialId) return materialStore.currentMaterial?.source_url ?? '';
+  return '';
+});
+const materialCardTime = computed(() => {
+  if (materialStore.currentMaterialId) return formatMaterialTime(materialStore.currentMaterial?.created_at);
+  return '';
+});
+const materialInTag = computed(() => {
+  const t = materialStore.currentTagDocumentId;
+  return !!t && t !== '__uncategorized__';
+});
+
+// 标签视图：当前标签下的素材列表（按显示顺序），用于「一条素材一张卡片」
+const tagViewMaterials = computed<Material[]>(() => {
+  const ids = materialStore.currentTagDocOrderedIds;
+  const list: Material[] = [];
+  for (const id of ids) {
+    const m = materialStore.materials.find(x => x.id === id);
+    if (m) list.push(m);
+  }
+  return list;
+});
 
 // 编辑器显示内容：根据模式切换来源
 const displayedContent = computed({
@@ -365,6 +430,9 @@ function handleClipSaved(_matId: string) {
   materialStore.closeClipDialog();
   browserManuallyHidden.value = false;
   if (browserOpen.value) {
+    // hide_browser 已将窗口移到屏幕外，恢复时先重定位回正确视口再显示
+    const vp = getBrowserViewportRect();
+    if (vp) invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
     invoke("show_browser").catch(() => {});
   }
 }
@@ -374,6 +442,9 @@ function handleClipClose() {
   materialStore.closeClipDialog();
   browserManuallyHidden.value = false;
   if (browserOpen.value) {
+    // hide_browser 已将窗口移到屏幕外，恢复时先重定位回正确视口再显示
+    const vp = getBrowserViewportRect();
+    if (vp) invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
     invoke("show_browser").catch(() => {});
   }
 }
@@ -401,6 +472,102 @@ function handleBrowserAddToChat(text: string) {
   if (!text) return;
   store.injectedChatText = text;
   store.sidebarTab = 'chat';
+}
+
+// 处理浏览器"添加笔记"：切换到文档模式、创建新文档、粘贴内容
+let _lastNoteText = ''
+let _lastNoteTime = 0
+async function handleBrowserAddToNote(text: string) {
+  if (!text) return;
+  // 双通道去重：同一文本 1 秒内只处理一次
+  const now = Date.now()
+  if (text === _lastNoteText && now - _lastNoteTime < 1000) return
+  _lastNoteText = text
+  _lastNoteTime = now
+  // 隐藏浏览器（避免被遮挡）
+  if (browserOpen.value) {
+    browserManuallyHidden.value = true;
+    await invoke("hide_browser").catch(() => {});
+  }
+  // 切换到文档模式
+  leftSubTab.value = 'docs';
+  // 创建新文档
+  await store.createNewDocument('笔记');
+  // 将选中文本转换为 ProseMirror 文档并设为当前内容
+  const doc = textToDocJson(text);
+  if (doc && doc.content && doc.content.length > 0) {
+    store.currentContent = doc;
+  }
+}
+
+// 处理浏览器请求文档列表 → 响应 doc list
+function handleBrowserRequestDocs() {
+  // 使用 store.documents 获取全量文档列表
+  const rawList = (store.documents || filteredDocuments.value || []) as { id: string; title: string }[];
+  const docs = rawList.map(d => ({ id: d.id, title: d.title }));
+  console.log("[AiPen] 返回文档列表:", docs.length, "篇");
+  try {
+    invoke("emit_to_browser", { event: "browser-docs-response", payload: { docs } }).catch(() => {});
+  } catch {}
+}
+
+// 处理浏览器"追加到文档"：选中文本追加到指定文档末尾
+let _lastAppendText = ''
+let _lastAppendTime = 0
+async function handleBrowserAppendToDoc(payload: { docId: string; text: string; url?: string; title?: string }) {
+  const { docId, text, url, title } = payload;
+  if (!docId || !text) return;
+  // 双通道去重
+  const now = Date.now()
+  const dedupKey = docId + '|' + text.substring(0, 40)
+  if (dedupKey === _lastAppendText && now - _lastAppendTime < 1000) return
+  _lastAppendText = dedupKey
+  _lastAppendTime = now
+
+  try {
+    // 获取目标文档当前草稿内容
+    const raw = await invoke<string | null>("get_draft", { docId });
+    let draft: any;
+    if (raw) {
+      draft = JSON.parse(raw);
+    } else {
+      // 没有草稿 → 从版本中获取或新建空文档
+      draft = { type: 'doc', content: [], comments: [] };
+    }
+
+    // 构建追加块：分隔线 + 引文(红色) + 正文(红色)
+    const timestamp = new Date().toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+    const sourceLabel = title ? `【来源：${title}` : '【来源';
+    const urlLabel = url ? ` | ${url}` : '';
+    const citationText = `${sourceLabel}${urlLabel} · ${timestamp}】`;
+
+    const redMark = [{ type: 'textStyle', attrs: { color: '#ef4444' } }];
+    const newBlocks = [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', marks: redMark, text: `📎 ${citationText}` }],
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', marks: redMark, text }],
+      },
+    ];
+
+    // 追加到文档末尾
+    draft.content = [...(draft.content || []), ...newBlocks];
+    // 保存草稿
+    await invoke("save_draft", { docId, content: JSON.stringify(draft) });
+
+    // 如果当前正在查看该文档，更新编辑器内容
+    if (store.currentDocId === docId) {
+      store.currentContent = draft;
+    }
+  } catch (e) {
+    console.error("[AiPen] 追加到文档失败:", e);
+  }
 }
 
 // ── 素材面板事件 ──
@@ -464,6 +631,57 @@ function handleEditorInsertToChat(text: string) {
   store.sidebarTab = 'chat';
 }
 
+/** 素材工具栏「新建笔记」：创建新文档并填入选中文字 */
+async function handleMaterialAddToNote(text: string) {
+  if (!text) return;
+  // 切换到文档页签
+  leftSubTab.value = 'docs';
+  await store.createNewDocument('笔记');
+  const doc = textToDocJson(text);
+  if (doc && doc.content && doc.content.length > 0) {
+    store.currentContent = doc;
+  }
+}
+
+/** 素材工具栏「追加到文档」：将选中文字追加到指定文档末尾（与浏览器格式一致） */
+async function handleMaterialAppendToDoc(payload: { docId: string; text: string }) {
+  const { docId, text } = payload;
+  if (!docId || !text) return;
+  try {
+    const raw = await invoke<string | null>("get_draft", { docId });
+    let draft: any;
+    if (raw) {
+      draft = JSON.parse(raw);
+    } else {
+      draft = { type: 'doc', content: [], comments: [] };
+    }
+    // 对齐浏览器格式：红色引文行 + 红色正文
+    const timestamp = new Date().toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+    const redMark = [{ type: 'textStyle', attrs: { color: '#ef4444' } }];
+    const newBlocks = [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', marks: redMark, text: `📎 【素材引用 · ${timestamp}】` }],
+      },
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', marks: redMark, text }],
+      },
+    ];
+    draft.content = [...(draft.content || []), ...newBlocks];
+    await invoke("save_draft", { docId, content: JSON.stringify(draft) });
+    // 如果当前正在查看该文档，更新编辑器内容
+    if (store.currentDocId === docId) {
+      store.currentContent = draft;
+    }
+  } catch (e) {
+    console.error('[material-append-to-doc] 追加失败:', e);
+  }
+}
+
 /** 在标签视图中根据选中位置查找所属素材 */
 function findMaterialInTagView(selectionStart: number): string | null {
   // 单素材视图不适用
@@ -474,33 +692,32 @@ function findMaterialInTagView(selectionStart: number): string | null {
   return materialStore.resolveDocPositionToMaterial(doc, selectionStart);
 }
 
-async function handleEditorDeleteMaterial(selectionStart: number) {
-  // 单素材视图：直接删除
-  if (materialStore.currentMaterialId) {
-    await materialStore.deleteMaterial(materialStore.currentMaterialId);
-    return;
-  }
-  // 标签视图：根据选中位置找到素材并删除，然后刷新视图
-  const matId = findMaterialInTagView(selectionStart);
+async function handleEditorDeleteMaterial(payload: string | number) {
+  let matId: string | null;
+  if (typeof payload === "string") matId = payload;
+  else if (materialStore.currentMaterialId) matId = materialStore.currentMaterialId;
+  else matId = findMaterialInTagView(payload);
   if (!matId) return;
   await materialStore.deleteMaterial(matId);
-  // 刷新标签视图内容
+  // 刷新标签视图内容（单素材视图删除后 currentMaterialId 已清空，无需刷新列表）
   refreshTagView();
 }
 
-async function handleEditorRemoveFromTag(selectionStart: number) {
+async function handleEditorRemoveFromTag(payload: string | number) {
   const tagId = materialStore.currentTagDocumentId === "__uncategorized__"
     ? null
     : materialStore.currentTagDocumentId;
   if (!tagId) return; // 未分类不可操作
-  const matId = findMaterialInTagView(selectionStart);
+  const matId = typeof payload === "string"
+    ? payload
+    : (materialStore.currentMaterialId ?? findMaterialInTagView(payload));
   if (!matId) return;
   const mat = materialStore.materials.find(m => m.id === matId);
   if (!mat) return;
   const newTagIds = mat.tags.filter(t => t.id !== tagId).map(t => t.id);
   await materialStore.setMaterialTags(matId, newTagIds);
-  // 刷新标签视图内容（该素材已从当前标签移除）
-  refreshTagView();
+  // 单素材视图：保留当前素材显示，不切回标签视图；标签视图才刷新
+  if (!materialStore.currentMaterialId) refreshTagView();
 }
 
 /** 刷新当前标签视图内容，若标签已无素材则退回列表 */
@@ -636,10 +853,13 @@ watch(leftSubTab, async (tab) => {
   if (!browserOpen.value) return;
   try {
     if (tab !== 'browser') {
+      // 切走浏览器 tab：标记"手动隐藏"，杜绝任何自动复活路径，再隐藏 owned 窗口
+      browserManuallyHidden.value = true;
       await invoke("hide_browser");
     } else {
-      // 切回浏览器 tab，先 resize 再 show（窗口可能变过大小/位置）
+      // 切回浏览器 tab：解除手动隐藏标记，先 resize 再 show（窗口可能变过大小/位置）
       // 必须等 nextTick，DOM 更新后地址栏元素才挂载，否则 barHeight=0，webview 盖住地址栏
+      browserManuallyHidden.value = false;
       await nextTick();
       const vp = getBrowserViewportRect();
       if (vp) {
@@ -658,6 +878,9 @@ watch(isDark, async (dark) => {
 // 浏览器打开时，窗口大小变化 → 重定位 webview
 function repositionBrowser() {
   if (!browserOpen.value) return;
+  // ★ 非浏览器 tab 时绝不重定位：resize_browser_webview 的 set_position/set_size
+  // 走 SetWindowPos 可能连带把已隐藏的 owned 窗口“顶”出来，盖住文档/素材内容区。
+  if (leftSubTab.value !== 'browser') return;
   const vp = getBrowserViewportRect();
   if (!vp) return;
   invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height }).catch(() => {});
@@ -685,6 +908,8 @@ const folderFilterDropdownStyle = computed(() => {
   const rect = el.getBoundingClientRect();
   return { left: rect.left + 'px', top: (rect.bottom + 4) + 'px' };
 });
+
+
 const showMoveDocModal = ref(false);
 const moveDocTarget = ref<{ id: string; title: string } | null>(null);
 const moveDocNewFolderName = ref("");
@@ -1063,6 +1288,9 @@ watch(browserOverlayOpen, async (open) => {
 let closeRequestUnlisten: (() => void) | null = null;
 let browserClipUnlisten: (() => void) | null = null;
 let browserChatUnlisten: (() => void) | null = null;
+let browserNoteUnlisten: (() => void) | null = null;
+let browserDocsRequestUnlisten: (() => void) | null = null;
+let browserAppendDocUnlisten: (() => void) | null = null;
 let focusUnlisten: (() => void) | null = null;
 let movedUnlisten: (() => void) | null = null;
 let scaleChangedUnlisten: (() => void) | null = null;
@@ -1099,6 +1327,30 @@ onMounted(async () => {
       },
     );
 
+    // 监听浏览器中"添加笔记"事件（emit 通道）
+    browserNoteUnlisten = await listen<{ text: string; url?: string; title?: string }>(
+      "browser-add-to-note",
+      (event) => {
+        handleBrowserAddToNote(event.payload.text);
+      },
+    );
+
+    // 监听浏览器中"请求文档列表"事件（emit 通道）
+    browserDocsRequestUnlisten = await listen(
+      "browser-request-docs",
+      () => {
+        handleBrowserRequestDocs();
+      },
+    );
+
+    // 监听浏览器中"追加到文档"事件（emit 通道）
+    browserAppendDocUnlisten = await listen<{ docId: string; text: string; url?: string; title?: string }>(
+      "browser-append-to-doc",
+      (event) => {
+        handleBrowserAppendToDoc(event.payload);
+      },
+    );
+
     // 注册全局函数，接收 eval 通道的剪藏调用（on_navigation / 自定义协议 eval 后备）
     (window as any).__aipenReceiveClip = (payload: { text: string; url?: string; title?: string }) => {
       console.log("[AiPen] __aipenReceiveClip 收到剪藏数据", payload?.text?.length ?? 0, "字符");
@@ -1109,6 +1361,24 @@ onMounted(async () => {
     (window as any).__aipenReceiveChat = (payload: { text: string; url?: string; title?: string }) => {
       console.log("[AiPen] __aipenReceiveChat 收到对话数据", payload?.text?.length ?? 0, "字符");
       handleBrowserAddToChat(payload.text);
+    };
+
+    // 注册全局函数，接收 eval 通道的"添加笔记"调用
+    (window as any).__aipenReceiveNote = (payload: { text: string; url?: string; title?: string }) => {
+      console.log("[AiPen] __aipenReceiveNote 收到笔记数据", payload?.text?.length ?? 0, "字符");
+      handleBrowserAddToNote(payload.text);
+    };
+
+    // 注册全局函数，接收 eval 通道的"文档列表请求"调用
+    (window as any).__aipenReceiveDocsRequest = () => {
+      console.log("[AiPen] __aipenReceiveDocsRequest 收到文档列表请求");
+      handleBrowserRequestDocs();
+    };
+
+    // 注册全局函数，接收 eval 通道的"追加到文档"调用
+    (window as any).__aipenReceiveAppendDoc = (payload: { docId: string; text: string; url?: string; title?: string }) => {
+      console.log("[AiPen] __aipenReceiveAppendDoc 收到追加文档数据", payload?.text?.length ?? 0, "字符");
+      handleBrowserAppendToDoc(payload);
     };
 
     // 窗口 resize 时重定位浏览器 webview
@@ -1135,22 +1405,25 @@ onMounted(async () => {
     //   - 主窗口获焦 + browser tab 激活 → resize + show（从最小化恢复时）
     //   - 失焦时不再需要手动 hide——owned window 自动跟随 owner 隐藏
     focusUnlisten = await win.onFocusChanged(async ({ payload: focused }) => {
-      if (browserOpen.value && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
-        try {
-          if (focused) {
-            // 主窗口被聚焦 / 从最小化恢复 → resize + show
-            const minimized = await getCurrentWindow().isMinimized();
-            if (!minimized) {
-              const vp = getBrowserViewportRect();
-              if (vp) {
-                await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
-              }
-              await invoke("show_browser");
+      if (!browserOpen.value) return;
+      try {
+        if (focused && !browserManuallyHidden.value && leftSubTab.value === 'browser') {
+          // 主窗口被聚焦 / 从最小化恢复 → resize + show
+          const minimized = await getCurrentWindow().isMinimized();
+          if (!minimized) {
+            const vp = getBrowserViewportRect();
+            if (vp) {
+              await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
             }
+            await invoke("show_browser");
           }
-          // 失焦分支已删除：owned window 自动跟随 owner 隐藏/最小化/恢复
-        } catch { /* 忽略 */ }
-      }
+        } else if (focused && leftSubTab.value !== 'browser') {
+          // 离开浏览器 tab 后，OS 可能因 owner 激活自动"复活"该 owned 窗口，
+          // 这里兜底隐藏，避免它盖住文档/素材内容区（首次切回时尤其明显）。
+          await invoke("hide_browser");
+        }
+        // 失焦分支已删除：owned window 自动跟随 owner 隐藏/最小化/恢复
+      } catch { /* 忽略 */ }
     });
   } finally {
     // 初始化完成，淡出启动画面
@@ -1165,12 +1438,16 @@ onBeforeUnmount(() => {
   closeRequestUnlisten?.();
   browserClipUnlisten?.();
   browserChatUnlisten?.();
+  browserNoteUnlisten?.();
+  browserDocsRequestUnlisten?.();
+  browserAppendDocUnlisten?.();
   focusUnlisten?.();
   movedUnlisten?.();
   scaleChangedUnlisten?.();
   browserResizeObserver?.disconnect();
   window.removeEventListener("resize", onBrowserResize);
   delete (window as any).__aipenReceiveClip;
+  delete (window as any).__aipenReceiveCompare;
   delete (window as any).__aipenReceiveChat;
 });
 
@@ -1301,6 +1578,9 @@ async function tryExit() {
     browserManuallyHidden.value = false;
     if (browserOpen.value) {
       try {
+        // hide_browser 已将窗口移到屏幕外，恢复时先重定位回正确视口
+        const vp = getBrowserViewportRect();
+        if (vp) await invoke("resize_browser_webview", { x: vp.x, y: vp.y, width: vp.width, height: vp.height });
         await invoke("show_browser");
       } catch { /* 忽略 */ }
     }
@@ -1951,32 +2231,119 @@ async function handleExportWord() {
             </button>
             </div>
           </div>
-          <!-- WebView 占位 / 提示 -->
-          <div
-            v-if="!browserOpen"
-            class="flex-1 flex items-center justify-center bg-white dark:bg-[#030712]"
-          >
-            <div class="text-center space-y-3">
-              <span class="text-3xl">🌐</span>
-              <p class="text-sm text-gray-400 dark:text-gray-500">浏览器模式</p>
-              <p class="text-xs text-gray-500 dark:text-gray-600">在上方地址栏输入网址，或点击左侧书签打开 WebView</p>
-              <p class="text-xs text-gray-500 dark:text-gray-600">选择 「文档」 Tab 返回编辑器</p>
+
+          <!-- 浏览器内容区：WebView 占位 -->
+          <div class="flex flex-1 min-h-0 relative overflow-hidden">
+            <!-- WebView 占位 / 提示 -->
+            <div
+              v-if="!browserOpen"
+              class="flex-1 flex items-center justify-center bg-white dark:bg-[#030712]"
+            >
+              <div class="text-center space-y-3">
+                <span class="text-3xl">🌐</span>
+                <p class="text-sm text-gray-400 dark:text-gray-500">浏览器模式</p>
+                <p class="text-xs text-gray-500 dark:text-gray-600">在上方地址栏输入网址，或点击左侧书签打开 WebView</p>
+                <p class="text-xs text-gray-500 dark:text-gray-600">选择 「文档」 Tab 返回编辑器</p>
+              </div>
             </div>
+
           </div>
         </div>
+        <!-- 标签视图：CandidatePanel（左） + 卡片列表 -->
+        <div
+          v-if="isViewingTagDoc"
+          class="flex flex-1 min-h-0 relative overflow-hidden"
+        >
+          <CandidatePanel
+            @navigateToDocument="handleCandidateNavigateToDocument"
+            @navigateToMaterial="handleCandidateNavigateToMaterial"
+            @openBrowser="handleOpenBrowser"
+          />
+          <div class="flex-1 min-h-0 overflow-y-auto" style="scrollbar-gutter: stable;">
+            <div class="material-list-inner">
+              <RichEditor
+                v-for="m in tagViewMaterials"
+                :key="m.id"
+                :model-value="parseMaterialContent(m.content)"
+                :readonly="true"
+                editMode="material"
+                :material-scroll="false"
+                :material-id="m.id"
+                :material-title="m.source_title || m.title || '素材'"
+                :material-source="m.source_url ?? ''"
+                :material-time="formatMaterialTime(m.created_at)"
+                :in-tag="materialInTag"
+                :material-font-family="materialFontFamily"
+                :material-font-size="materialFontSize"
+                class="material-card-host"
+                @delete-material="handleEditorDeleteMaterial"
+                @remove-from-tag="handleEditorRemoveFromTag"
+                @open-browser="handleOpenBrowser"
+                @insert-to-chat="handleEditorInsertToChat"
+                @material-add-to-note="handleMaterialAddToNote"
+                @material-append-to-doc="handleMaterialAppendToDoc"
+              />
+            </div>
+          </div>
+          <CommentListPanel
+            v-if="compareStore.hasEntries"
+            hide-comments
+            hide-proofread
+            @jump="() => {}"
+            @jumpProofread="() => {}"
+            @replaceProofread="() => {}"
+          />
+        </div>
+
+        <!-- 素材模式引导占位：未选中任何标签/素材时 -->
+        <div
+          v-else-if="showMaterialEmpty"
+          class="flex-1 flex items-center justify-center bg-white dark:bg-[#030712]"
+        >
+          <div class="text-center space-y-3">
+            <span class="text-3xl">📚</span>
+            <p class="text-sm text-gray-400 dark:text-gray-500">素材模式</p>
+            <p class="text-xs text-gray-500 dark:text-gray-600">在左侧选择一个标签，查看该标签下的全部素材</p>
+            <p class="text-xs text-gray-500 dark:text-gray-600">或在浏览器中收藏网页，素材会自动归入对应标签</p>
+          </div>
+        </div>
+
+        <!-- 搜索模式引导占位：中间内容区域（与浏览器/素材模式风格一致） -->
+        <div
+          v-else-if="leftSubTab === 'search'"
+          class="flex-1 flex items-center justify-center bg-white dark:bg-[#030712]"
+        >
+          <div class="text-center space-y-3">
+            <span class="text-3xl">🔍</span>
+            <p class="text-sm text-gray-400 dark:text-gray-500">搜索模式</p>
+            <p class="text-xs text-gray-500 dark:text-gray-600">在左侧搜索框输入关键词，检索文档与素材</p>
+            <p class="text-xs text-gray-500 dark:text-gray-600">点击结果可跳转并高亮匹配内容</p>
+          </div>
+        </div>
+
+
         <RichEditor
-          v-if="editMode !== 'webview'"
+          v-else-if="editMode !== 'webview'"
           ref="richEditorRef"
           v-model="displayedContent"
-          :readonly="isViewingHistory || isWritingPhase || isViewingTagDoc"
+          :readonly="isViewingHistory || isWritingPhase"
           :editMode="editorEditMode"
           :materialId="materialStore.currentMaterialId ?? undefined"
           :auto-show-outline="store.isTutorialDoc"
           :highlight-query="searchHighlightQuery"
+          :material-title="materialCardTitle"
+          :material-source="materialCardSource"
+          :material-time="materialCardTime"
+          :in-tag="materialInTag"
+          :material-font-family="materialFontFamily"
+          :material-font-size="materialFontSize"
           class="flex-1"
           @insert-to-chat="handleEditorInsertToChat"
+          @material-add-to-note="handleMaterialAddToNote"
+          @material-append-to-doc="handleMaterialAppendToDoc"
           @delete-material="handleEditorDeleteMaterial"
           @remove-from-tag="handleEditorRemoveFromTag"
+          @open-browser="handleOpenBrowser"
           @toggle-fullscreen="handleToggleFullscreen"
           @selection-change="onSelectionChange"
         >
@@ -1998,6 +2365,7 @@ async function handleExportWord() {
           @requestClose="handleRequestClose"
           @stream="handleStream"
         />
+
       </main>
 
       <!-- 右侧悬浮折叠按钮 -->

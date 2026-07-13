@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useMaterialStore, type Bookmark } from "../stores/materialStore";
+import { materialFontFamily, materialFontSize, MATERIAL_FONT_OPTIONS, MATERIAL_FONT_SIZE_OPTIONS } from "../stores/materialStore";
 import { useConfirm } from "../composables/useConfirm";
 
 const props = defineProps<{
@@ -219,7 +220,26 @@ async function handleDeleteBookmark(bm: Bookmark) {
 }
 
 function handleOpenBookmark(url: string) {
+  const bm = store.bookmarks.find(b => b.url === url);
+  if (bm && !bm.favicon) {
+    store.fetchBookmarkFavicon(bm.id);
+  }
   emit("update", "openBrowser", url);
+}
+
+// ── 素材字体/字号设置面板 ──
+const showFontPanel = ref(false);
+const fontBtnRef = ref<HTMLElement | null>(null);
+const fontPanelStyle = ref<{ left: string; top: string }>({ left: "0px", top: "0px" });
+function toggleFontPanel() {
+  if (!showFontPanel.value) {
+    const el = fontBtnRef.value;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      fontPanelStyle.value = { left: rect.left + "px", top: rect.bottom + 6 + "px" };
+    }
+  }
+  showFontPanel.value = !showFontPanel.value;
 }
 </script>
 
@@ -227,7 +247,19 @@ function handleOpenBookmark(url: string) {
   <!-- 素材 Tab：按标签文档展示（与文档面板操作逻辑一致） -->
   <div v-if="subTab === 'materials'" class="flex flex-col h-full">
     <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800">
-      <span class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">素材</span>
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">素材</span>
+        <!-- 字体/字号设置齿轮 -->
+        <button
+          ref="fontBtnRef"
+          type="button"
+          class="inline-flex items-center justify-center w-4 h-4 rounded text-gray-400 dark:text-gray-500 opacity-60 hover:opacity-100 hover:text-blue-400 hover:bg-blue-500/10 transition-all"
+          title="素材字体与字号设置"
+          @click.stop="toggleFontPanel"
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
       <button
         class="text-xs text-gray-400 dark:text-gray-500 hover:text-blue-400 transition-colors"
         title="新建标签"
@@ -236,6 +268,40 @@ function handleOpenBookmark(url: string) {
         + 新建
       </button>
     </div>
+
+    <!-- 素材字体/字号设置弹出面板 -->
+    <Teleport to="body">
+      <div
+        v-if="showFontPanel"
+        class="fixed inset-0 z-[10006]"
+        @click.self="showFontPanel = false"
+      >
+        <div
+          class="absolute w-56 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg shadow-xl p-3 space-y-3"
+          :style="fontPanelStyle"
+        >
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">素材显示设置</div>
+          <div class="space-y-1">
+            <label class="block text-[11px] text-gray-400 dark:text-gray-500">字体</label>
+            <select
+              v-model="materialFontFamily"
+              class="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-1 outline-none focus:border-blue-500"
+            >
+              <option v-for="opt in MATERIAL_FONT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+          <div class="space-y-1">
+            <label class="block text-[11px] text-gray-400 dark:text-gray-500">字号</label>
+            <select
+              v-model="materialFontSize"
+              class="w-full text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-1 outline-none focus:border-blue-500"
+            >
+              <option v-for="s in MATERIAL_FONT_SIZE_OPTIONS" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </Teleport>
     <div class="flex-1 overflow-y-auto">
       <div
         v-for="item in tagListItems"
@@ -335,7 +401,17 @@ function handleOpenBookmark(url: string) {
         class="group flex items-center gap-2 px-2 py-2 cursor-pointer transition-colors text-gray-600 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50 hover:text-gray-800 dark:hover:text-gray-200"
         @click="handleOpenBookmark(bm.url)"
       >
-        <span class="text-[10px] shrink-0">🔗</span>
+        <span class="shrink-0 w-4 h-4 flex items-center justify-center">
+          <img
+            v-if="bm.favicon"
+            :src="bm.favicon"
+            class="w-3.5 h-3.5 rounded-sm"
+            alt=""
+            @load="console.log('[Favicon] img OK:', bm.url)"
+            @error="store.clearBookmarkFavicon(bm.id)"
+          />
+          <span v-else class="text-[10px] leading-none">🔗</span>
+        </span>
         <div class="flex-1 min-w-0">
           <p class="text-xs truncate">{{ bm.title || bm.url }}</p>
           <p class="text-[10px] text-gray-500 dark:text-gray-600 truncate">{{ bm.url }}</p>

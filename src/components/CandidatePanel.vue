@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { watch } from "vue";
 import { useCandidateStore, type CandidateItem } from "../stores/candidateStore";
 import { useDocumentStore } from "../stores/document";

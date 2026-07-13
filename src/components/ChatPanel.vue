@@ -45,6 +45,23 @@ const inputText = ref("");
 const loading = ref({ list: false, send: false });
 const error = ref("");
 const messagesContainer = ref<HTMLDivElement>();
+const textareaRef = ref<HTMLTextAreaElement>();
+
+/** 输入框自动增高，初始 2 行，最高 6 行，超出出现滚动条 */
+const AUTO_MIN_ROWS = 2;
+const AUTO_MAX_ROWS = 6;
+
+function autoResizeTextarea() {
+  const el = textareaRef.value;
+  if (!el) return;
+  // 先重置高度，才能正确获取 scrollHeight
+  el.style.height = "auto";
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+  const padding = parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom);
+  const minHeight = lineHeight * AUTO_MIN_ROWS + padding;
+  const maxHeight = lineHeight * AUTO_MAX_ROWS + padding;
+  el.style.height = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight) + "px";
+}
 
 // 知识库选择
 const knowledgeBases = ref<KnowledgeBase[]>([]);
@@ -73,16 +90,16 @@ watch(
   () => props.injectedText,
   (text) => {
     if (text) {
-      pendingQuote.value = text;
+      pendingQuotes.value.push(text);
       emit("injected-text-consumed");
     }
   },
   { immediate: true },
 );
 
-// 引用气泡（不占输入框空间）
-const pendingQuote = ref("");
-function removeQuote() { pendingQuote.value = "" }
+// 引用气泡（不占输入框空间），支持多条累积
+const pendingQuotes = ref<string[]>([]);
+function removeQuote(index: number) { pendingQuotes.value.splice(index, 1); }
 
 // 本地文件附件
 const attachedFiles = ref<{ name: string; content: string }[]>([]);
@@ -122,7 +139,7 @@ function removeAttachedFile(index: number) {
 
 function buildContextText(): string {
   const parts: string[] = [];
-  if (pendingQuote.value) parts.push(pendingQuote.value);
+  for (const q of pendingQuotes.value) parts.push(q);
   for (const f of attachedFiles.value) {
     parts.push(`[文件: ${f.name}]\n${f.content}`);
   }
@@ -217,8 +234,10 @@ async function sendMessage() {
   if (!text || !currentConvId.value || loading.value.send) return;
   const quote = buildContextText() || null;
   inputText.value = "";
-  pendingQuote.value = "";
+  pendingQuotes.value = [];
   attachedFiles.value = [];
+  await nextTick();
+  autoResizeTextarea();
   loading.value.send = true;
   error.value = "";
 
@@ -487,19 +506,20 @@ function formatTime(ts: string) {
 
     <!-- 输入区域 -->
     <div class="border-t border-gray-200 dark:border-gray-800 pt-2">
-      <!-- 引用气泡 -->
+      <!-- 引用气泡列表 -->
       <div
-        v-if="pendingQuote"
-        class="relative mb-2 px-2.5 py-2 bg-blue-100 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800/40 rounded-lg group"
+        v-for="(quote, i) in pendingQuotes"
+        :key="i"
+        class="relative mb-1.5 px-2.5 py-2 bg-blue-100 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800/40 rounded-lg group"
       >
-        <div class="text-[10px] text-blue-400 font-medium mb-0.5">📎 引用文本</div>
+        <div class="text-[10px] text-blue-400 font-medium mb-0.5">📎 引用文本 {{ pendingQuotes.length > 1 ? `(${i + 1})` : "" }}</div>
         <div class="text-[11px] text-gray-700 dark:text-gray-300 leading-relaxed italic overflow-y-auto" style="max-height: 5em;">
-          {{ pendingQuote }}
+          {{ quote }}
         </div>
         <button
           class="absolute top-1.5 right-2 h-5 w-5 flex items-center justify-center text-[10px] text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors opacity-0 group-hover:opacity-100"
-          title="移除引用"
-          @click="removeQuote"
+          title="移除此引用"
+          @click="removeQuote(i)"
         >
           ✕
         </button>
@@ -596,12 +616,14 @@ function formatTime(ts: string) {
 
       <div class="flex gap-2">
         <textarea
+          ref="textareaRef"
           v-model="inputText"
           placeholder="输入消息，Enter 发送，Shift+Enter 换行"
           rows="2"
-          class="flex-1 px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:border-blue-500 focus:outline-none resize-none"
+          class="flex-1 px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:border-blue-500 focus:outline-none resize-none overflow-y-auto"
           :disabled="loading.send || !currentConvId"
           @keydown="handleKeydown"
+          @input="autoResizeTextarea"
         />
         <button
           class="h-auto px-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded transition-colors shrink-0"

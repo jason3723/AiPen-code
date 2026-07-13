@@ -75,26 +75,12 @@ watch([isDark, source], () => {
 });
 
 /** 监听系统主题变化:仅在 source === 'system' 时跟随 */
-const mql =
-  typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-color-scheme: dark)")
-    : null;
-
-function onSystemChange(e: MediaQueryListEvent) {
-  if (source.value === "system") {
-    isDark.value = e.matches;
-  }
-}
-
-if (mql) {
-  // 兼容旧 API(Safari < 14)
-  if (typeof mql.addEventListener === "function") {
-    mql.addEventListener("change", onSystemChange);
-    onScopeDispose(() => mql!.removeEventListener("change", onSystemChange));
-  } else if (typeof (mql as any).addListener === "function") {
-    (mql as any).addListener(onSystemChange);
-    onScopeDispose(() => (mql as any).removeListener(onSystemChange));
-  }
+function onSystemChange(refIsDark: ReturnType<typeof ref<boolean>>, refSource: ReturnType<typeof ref<ThemeSource>>) {
+  return (e: MediaQueryListEvent) => {
+    if (refSource.value === "system") {
+      refIsDark.value = e.matches;
+    }
+  };
 }
 
 /** 切换主题:用户手动切换总是 source='user' */
@@ -116,6 +102,23 @@ function followSystem() {
 }
 
 export function useTheme() {
+  // 在 composable 内部注册 MQL 监听，onScopeDispose 可正常生效
+  const mql =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+
+  if (mql) {
+    const handler = onSystemChange(isDark, source);
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", handler);
+      onScopeDispose(() => mql.removeEventListener("change", handler));
+    } else if (typeof (mql as any).addListener === "function") {
+      (mql as any).addListener(handler);
+      onScopeDispose(() => (mql as any).removeListener(handler));
+    }
+  }
+
   return {
     isDark,
     source,
