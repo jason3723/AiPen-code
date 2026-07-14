@@ -53,6 +53,7 @@ function extractMaterialText(content: string): string {
 export const MATERIAL_FONT_OPTIONS = [
   { label: '微软雅黑', value: "'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif" },
   { label: '宋体', value: "'SimSun', '宋体', 'Songti SC', serif" },
+  { label: '京華老宋体', value: "'京華老宋体', 'JingHuaLaoSong', 'KaiTi', serif" },
   { label: '黑体', value: "'SimHei', '黑体', 'Heiti SC', sans-serif" },
   { label: '楷体', value: "'KaiTi', '楷体', 'Kaiti SC', serif" },
   { label: 'Arial', value: "Arial, Helvetica, sans-serif" },
