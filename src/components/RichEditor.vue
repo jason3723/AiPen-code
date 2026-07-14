@@ -6,7 +6,7 @@ import CommentListPanel from './CommentListPanel.vue'
 import CommentTooltip from './CommentTooltip.vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { Mark, Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from 'prosemirror-state'
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import { CellSelection } from 'prosemirror-tables'
 import StarterKit from '@tiptap/starter-kit'
@@ -1963,6 +1963,77 @@ function insertSymbol(ch: string) {
   symbolPanelOpen.value = false
 }
 
+// ── 引号修正（直引号 " → 中文弯引号 “ ”）──
+// 规则：按 block 内奇偶配对，第 1/3/5 个 " → 左引号 “，第 2/4/6 个 " → 右引号 ”。
+// 作用域：有选区 → 只处理选区；无选区 → 处理全文。
+// 安全策略：等长替换 + 单个 transaction + 从后往前 insertText + 映射光标，避免位置错乱与光标跳脱。
+const quoteFixMsg = ref('')
+let quoteFixMsgTimer: ReturnType<typeof setTimeout> | null = null
+function showQuoteFixMsg(text: string) {
+  quoteFixMsg.value = text
+  if (quoteFixMsgTimer) clearTimeout(quoteFixMsgTimer)
+  quoteFixMsgTimer = setTimeout(() => { quoteFixMsg.value = '' }, 2500)
+}
+
+function fixCurlyQuotes() {
+  const ed = editor.value
+  if (!ed) return
+  const { doc } = ed.state
+  const { from: selFrom, to: selTo, empty } = ed.state.selection
+  // 作用域：无选区 → 全文；有选区 → 选区范围
+  const scopeFrom = empty ? 0 : selFrom
+  const scopeTo = empty ? doc.content.size : selTo
+
+  // 收集所有需替换的直引号位置（绝对位置 + 目标弯引号）
+  const replacements: { from: number; to: number; ch: string }[] = []
+  doc.nodesBetween(scopeFrom, scopeTo, (node, pos) => {
+    // 跳过代码块整体
+    if (node.type.name === 'codeBlock') return false
+    // 仅处理文本块（段落 / 标题等），非文本块继续向下遍历
+    if (!node.isTextblock) return true
+    // 每个 block 独立奇偶配对
+    let openNext = true
+    let childOffset = 0
+    node.forEach((child) => {
+      const childStart = pos + 1 + childOffset
+      childOffset += child.nodeSize
+      if (!child.isText || !child.text) return
+      // 跳过行内 code 标记
+      if (child.marks.some((m) => m.type.name === 'code')) return
+      const text = child.text
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] !== '"') continue
+        const abs = childStart + i
+        if (abs < scopeFrom || abs >= scopeTo) continue
+        replacements.push({ from: abs, to: abs + 1, ch: openNext ? '\u201C' : '\u201D' })
+        openNext = !openNext
+      }
+    })
+    return false // 已手动处理该文本块内容，不再向下
+  })
+
+  if (replacements.length === 0) {
+    showQuoteFixMsg(empty ? '全文未发现需修正的引号' : '选区未发现需修正的引号')
+    return
+  }
+
+  // 单个 transaction，从后往前替换（等长，位置不偏移）
+  replacements.sort((a, b) => b.from - a.from)
+  let tr = ed.state.tr
+  for (const r of replacements) {
+    tr = tr.insertText(r.ch, r.from, r.to)
+  }
+  // 映射光标 / 选区回新文档，避免跳脱
+  const mappedFrom = tr.mapping.map(selFrom)
+  const mappedTo = tr.mapping.map(selTo)
+  tr = tr.setSelection(TextSelection.create(tr.doc, mappedFrom, mappedTo))
+  // 直接派发，不抢焦点、不强制滚动
+  ed.view.dispatch(tr)
+  editorStateTick.value++
+  clearSearchHighlights()
+  showQuoteFixMsg(`已修正 ${replacements.length} 处引号`)
+}
+
 // ── 批注输入浮层状态 ──
 const commentBarVisible = ref(false)
 const commentBarPosition = ref({ top: 0, left: 0 })
@@ -2457,6 +2528,8 @@ const svg = {
   printer: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 12H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`,
   // Ω 符号图标：用 text 居中渲染，字号与 14×14 图标视觉重量一致
   symbol: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" stroke="none" style="font-family: 'Times New Roman', serif; line-height: 1"><text x="7" y="11" text-anchor="middle" font-size="14" font-weight="600" dominant-baseline="alphabetic">Ω</text></svg>`,
+  // 引号修正图标：渲染左双引号 “
+  quoteFix: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" stroke="none" style="font-family: 'Times New Roman', serif; line-height: 1"><text x="7" y="13" text-anchor="middle" font-size="18" font-weight="700" dominant-baseline="alphabetic">\u201C</text></svg>`,
   outline: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
   fullscreen: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`,
   minus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
@@ -2752,6 +2825,8 @@ function btnClass(active: boolean) {
       </div>
       <div v-if="symbolPanelOpen" class="fixed inset-0 z-40" @mousedown="closeDropdowns" />
 
+      <button title="修正引号：直引号 &quot; → 中文弯引号 “ ”（选中则处理选区，否则处理全文）" class="rich-btn" @mousedown.prevent="fixCurlyQuotes" v-html="svg.quoteFix" />
+
       <div class="flex-1" />
 
       <span class="rich-sep" :style="{ backgroundColor: tbSep }" />
@@ -2877,6 +2952,10 @@ function btnClass(active: boolean) {
       <!-- 校对无问题提示（手动校对返回 0 问题时显示，约 2.5 秒后自动销毁） -->
       <div v-else-if="proofreadStore.cleanHint" class="proofread-clean-toast">
         <span>✅ 未发现问题</span>
+      </div>
+      <!-- 引号修正结果提示（约 2.5 秒后自动销毁） -->
+      <div v-if="quoteFixMsg" class="proofread-clean-toast">
+        <span>{{ quoteFixMsg }}</span>
       </div>
 
       <!-- 素材卡片视图：纸卡外壳 + 头部操作栏 -->
