@@ -2776,6 +2776,21 @@ pub async fn create_browser_webview(
         }
         true
     })
+    .on_new_window({
+        // 把新窗口请求（target="_blank" / window.open）改为在当前 browser webview 内打开。
+        // Tauri 默认对未承接的新窗口请求会静默丢弃，表现为顶部导航「更多」等点击毫无反应。
+        let app2 = app.clone();
+        move |url, _features| {
+            // 只接管 http/https，避免 about:blank / javascript: 等把当前页清空
+            if url.scheme() == "http" || url.scheme() == "https" {
+                if let Some(browser) = app2.get_webview_window("browser") {
+                    let _ = browser.navigate(url);
+                }
+            }
+            // 拒绝浏览器自行弹出的新窗口，统一在当前窗口内打开
+            tauri::webview::NewWindowResponse::Deny
+        }
+    })
     .build()
     .map_err(|e| format!("创建浏览器窗口失败: {}", e))?;
 

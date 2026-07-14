@@ -18,6 +18,7 @@ import type { ComposeRecipe, ComposeProgress, ComposePhase } from "../types/comp
 import { useDocumentStore } from "../stores/document";
 import { useExportSettingsStore } from "../stores/exportSettings";
 import { useMaterialStore } from "../stores/materialStore";
+import pkg from "../../package.json";
 import type { Material } from "../stores/materialStore";
 import { parseMaterialContent } from "../stores/materialStore";
 import { materialFontFamily, materialFontSize, formatMaterialTime } from "../stores/materialStore";
@@ -40,7 +41,17 @@ const { confirm } = useConfirm();
 const { isDark, toggleTheme } = useTheme();
 
 // ── 应用版本 ──
-const appVersion = "4.0.0";
+const appVersion = pkg.version;
+
+// 关于面板动态标语
+const slogans = [
+  "智能写作 · 全流程 AI 辅助",
+  "DeepSeek 驱动 · 管道式创作",
+  "采油人的专属写作助手",
+  "访谈 → 提纲 → 正文 → 审查 → 润色",
+];
+const sloganIndex = ref(0);
+let _sloganTimer: number | null = null;
 
 const store = useDocumentStore();
 const exportSettingsStore = useExportSettingsStore();
@@ -221,62 +232,139 @@ let _starfieldResizeHandler: (() => void) | null = null;
 
 function startStarfield(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d")!;
+  let W = 0, H = 0;
+  const NODE_COUNT = 34;
+  const LINK_DIST = 115;
+  const nodes: { x: number; y: number; vx: number; vy: number; r: number; tw: number }[] = [];
+  const STAR_COUNT = 70;
   const stars: { x: number; y: number; r: number; v: number; a: number }[] = [];
-  const STAR_COUNT = 150;
+  let scanX = -80;
+  let t = 0;
 
   function resize() {
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    W = canvas.width = canvas.offsetWidth;
+    H = canvas.height = canvas.offsetHeight;
   }
   _starfieldResizeHandler = resize;
   resize();
   window.addEventListener("resize", resize);
 
+  for (let i = 0; i < NODE_COUNT; i++) {
+    nodes.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: (Math.random() - 0.5) * 0.35,
+      r: Math.random() * 1.6 + 1.0,
+      tw: Math.random() * Math.PI * 2,
+    });
+  }
   for (let i = 0; i < STAR_COUNT; i++) {
     stars.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      r: Math.random() * 2 + 0.5,
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.0 + 0.3,
       v: Math.random() * 0.3 + 0.1,
       a: Math.random(),
     });
   }
 
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    t += 0.016;
     // 深空背景渐变
-    const bg = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, 0, canvas.width / 2, canvas.height / 2, canvas.width * 0.7);
-    bg.addColorStop(0, "rgba(20,30,80,0.4)");
-    bg.addColorStop(1, "rgba(5,5,25,0.95)");
+    ctx.clearRect(0, 0, W, H);
+    const bg = ctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, W * 0.8);
+    bg.addColorStop(0, "rgba(12,46,100,0.55)");
+    bg.addColorStop(1, "rgba(3,6,20,0.98)");
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, W, H);
 
+    // 缓慢下移的科技网格
+    ctx.strokeStyle = "rgba(80,150,230,0.06)";
+    ctx.lineWidth = 1;
+    const gridOff = (t * 14) % 28;
+    for (let y = -28 + gridOff; y < H; y += 28) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+
+    // 背景微闪星点（增加纵深）
     for (const s of stars) {
       s.a += s.v * 0.02;
-      const alpha = 0.4 + 0.6 * Math.sin(s.a);
+      const alpha = 0.2 + 0.45 * Math.sin(s.a);
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fillStyle = `rgba(200,220,255,${alpha})`;
       ctx.fill();
-      // 亮星加光晕
-      if (s.r > 1.2 && alpha > 0.8) {
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, s.r * 3, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(180,200,255,${alpha * 0.15})`;
-        ctx.fill();
+    }
+
+    // 节点漂移
+    for (const n of nodes) {
+      n.x += n.vx;
+      n.y += n.vy;
+      if (n.x < 0 || n.x > W) n.vx *= -1;
+      if (n.y < 0 || n.y > H) n.vy *= -1;
+      n.tw += 0.05;
+    }
+
+    // 节点间连线（距离越近越亮）
+    for (let i = 0; i < NODE_COUNT; i++) {
+      for (let j = i + 1; j < NODE_COUNT; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < LINK_DIST) {
+          const op = (1 - dist / LINK_DIST) * 0.5;
+          ctx.strokeStyle = `rgba(90,180,255,${op})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
       }
     }
 
-    // 偶尔划过一颗流星
-    if (Math.random() < 0.008) {
-      const mx = Math.random() * canvas.width;
-      const my = Math.random() * canvas.height * 0.5;
-      ctx.strokeStyle = "rgba(255,255,255,0.6)";
-      ctx.lineWidth = 1;
+    // 雷达扫描带：经过处节点被点亮
+    scanX += 1.6;
+    if (scanX > W + 60) scanX = -60;
+    const sweep = ctx.createLinearGradient(scanX - 32, 0, scanX + 32, 0);
+    sweep.addColorStop(0, "rgba(120,200,255,0)");
+    sweep.addColorStop(0.5, "rgba(120,200,255,0.18)");
+    sweep.addColorStop(1, "rgba(120,200,255,0)");
+    ctx.fillStyle = sweep;
+    ctx.fillRect(scanX - 32, 0, 64, H);
+
+    // 绘制节点（光晕 + 核心），靠近扫描带时更亮
+    for (const n of nodes) {
+      const near = Math.max(0, 1 - Math.abs(n.x - scanX) / 60);
+      const tw = 0.6 + 0.4 * Math.sin(n.tw);
+      const glow = n.r * 3 * (1 + near * 1.6);
       ctx.beginPath();
-      ctx.moveTo(mx, my);
-      ctx.lineTo(mx - 80, my + 40);
-      ctx.stroke();
+      ctx.arc(n.x, n.y, glow, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(120,200,255,${(0.12 + near * 0.35) * tw})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(220,240,255,${0.85 * tw})`;
+      ctx.fill();
+    }
+
+    // 偶发数据光点沿连线流动
+    if (Math.random() < 0.03) {
+      const i = Math.floor(Math.random() * NODE_COUNT);
+      let j = Math.floor(Math.random() * NODE_COUNT);
+      if (i === j) j = (j + 1) % NODE_COUNT;
+      const a = nodes[i], b = nodes[j];
+      const p = Math.random();
+      const px = a.x + (b.x - a.x) * p;
+      const py = a.y + (b.y - a.y) * p;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(190,235,255,0.9)";
+      ctx.fill();
     }
 
     _aboutAnimId = requestAnimationFrame(draw);
@@ -297,8 +385,17 @@ watch(showAbout, (v) => {
     nextTick(() => {
       if (aboutCanvasRef.value) startStarfield(aboutCanvasRef.value);
     });
+    // 启动标语轮播
+    sloganIndex.value = 0;
+    _sloganTimer = window.setInterval(() => {
+      sloganIndex.value = (sloganIndex.value + 1) % slogans.length;
+    }, 2600);
   } else {
     stopStarfield();
+    if (_sloganTimer !== null) {
+      clearInterval(_sloganTimer);
+      _sloganTimer = null;
+    }
   }
 });
 
@@ -3000,9 +3097,14 @@ async function handleExportWord() {
               class="absolute inset-0 w-full h-full"
             />
             <div class="absolute inset-0 flex flex-col items-center justify-center">
-              <div class="text-5xl mb-2">✒️</div>
-              <h2 class="text-2xl font-bold text-white tracking-wider">AiPen</h2>
-              <p class="text-sm text-blue-700 dark:text-blue-300 mt-1 font-mono">v{{ appVersion }}</p>
+              <div class="text-5xl mb-2 about-glow">✒️</div>
+              <h2 class="text-2xl font-bold text-white tracking-wider about-glow">AiPen</h2>
+              <p class="text-sm text-blue-300 mt-1 font-mono about-glow-soft">v{{ appVersion }}</p>
+              <Transition name="slogan-fade" mode="out-in">
+                <p :key="sloganIndex" class="text-xs text-cyan-200/90 mt-2 tracking-wide about-glow-soft">
+                  {{ slogans[sloganIndex] }}
+                </p>
+              </Transition>
             </div>
           </div>
           <!-- 信息区 -->
@@ -3044,6 +3146,29 @@ async function handleExportWord() {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* 关于面板标题发光（科技感） */
+.about-glow {
+  text-shadow: 0 0 16px rgba(130,200,255,0.65), 0 0 32px rgba(90,170,255,0.35);
+}
+.about-glow-soft {
+  text-shadow: 0 0 10px rgba(120,190,255,0.5);
+}
+
+/* 关于面板动态标语淡入淡出 */
+.slogan-fade-enter-active,
+.slogan-fade-leave-active {
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.slogan-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.slogan-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
 
 /* 炫彩文字流光 */
 @keyframes shimmer-progress {
