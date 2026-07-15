@@ -6,6 +6,8 @@ mod tokenizer;
 mod version;
 
 use std::sync::Mutex;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use base64::Engine;
@@ -27,6 +29,7 @@ fn should_process_clip(payload: &str) -> bool {
 pub struct AppState {
     pub db: sqlx::SqlitePool,
     pub ai_config: Mutex<ai::AIConfig>,
+    pub proofread_cancel: Arc<AtomicBool>,
 }
 
 async fn load_config_from_db(pool: &sqlx::SqlitePool) -> ai::AIConfig {
@@ -183,6 +186,7 @@ pub fn run() {
                 handle.manage(AppState {
                     db: pool,
                     ai_config: Mutex::new(ai_config),
+                    proofread_cancel: Arc::new(AtomicBool::new(false)),
                 });
             });
 
@@ -223,6 +227,8 @@ pub fn run() {
             commands::get_diff,
             commands::analyze_revision,
             commands::proofread,
+            commands::proofread_stream,
+            commands::cancel_proofread,
             commands::get_analysis,
             commands::get_api_config,
             commands::set_api_config,

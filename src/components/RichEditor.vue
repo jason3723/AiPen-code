@@ -1101,9 +1101,8 @@ Vue.watch(
 )
 
 // ── 校对：波浪线装饰 + 重映射 + 编辑即删 ──
-const proofreadActive = computed(() =>
-  proofreadStore.loading || (compareStore.panelOpen && compareStore.activeTab === 'proofread'),
-)
+/** 校对按钮高亮：仅在流式进行中亮起，完成后恢复常态（面板打开不代表按钮激活） */
+const proofreadActive = computed(() => proofreadStore.loading)
 
 /** 根据当前 store.items 重建波浪线装饰（from/to 为绝对文档位置） */
 function rebuildProofreadDecorations() {
@@ -2948,6 +2947,7 @@ function btnClass(active: boolean) {
       <div v-if="proofreadStore.manualRun" class="proofread-loading-toast">
         <span class="pf-spinner" />
         <span>校对进行中…</span>
+        <span class="pf-stop-btn" @click="proofreadStore.cancelProofread()" title="停止校对">停止</span>
       </div>
       <!-- 校对无问题提示（手动校对返回 0 问题时显示，约 2.5 秒后自动销毁） -->
       <div v-else-if="proofreadStore.cleanHint" class="proofread-clean-toast">
@@ -3569,6 +3569,25 @@ function btnClass(active: boolean) {
 }
 @keyframes pf-spin {
   to { transform: rotate(360deg); }
+}
+/* 停止校对按钮（下划线链接风格，需覆盖 toast 的 pointer-events:none） */
+.pf-stop-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  text-decoration: underline;
+  color: #ef4444;
+  font-weight: 600;
+  user-select: none;
+  transition: color 0.15s;
+}
+.pf-stop-btn:hover {
+  color: #dc2626;
+}
+.dark .pf-stop-btn {
+  color: #f87171;
+}
+.dark .pf-stop-btn:hover {
+  color: #fca5a5;
 }
 /* 按钮上叠加的旋转图标（不占空间） */
 .pf-btn-spinner {

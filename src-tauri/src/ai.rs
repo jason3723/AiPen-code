@@ -1,6 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use futures_util::StreamExt;
 
 // ─── 工具函数 ────────────────────────────────────────────────
@@ -107,16 +108,18 @@ pub struct ChatMessagePayload {
     pub content: String,
 }
 
-/// 单条校对结果（偏移均为【原文】的字符下标，从 0 起）
+/// 单条校对结果（偏移由后端自动计算，AI 无需输出）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofreadItem {
     /// 错别字 | 标点 | 语法 | 用词 | 格式
     pub category: String,
-    /// 起始字符下标（含）
+    /// 起始字符下标（含）—— 后端自动计算，AI 可填 0
+    #[serde(default)]
     pub start: usize,
-    /// 结束字符下标（不含）
+    /// 结束字符下标（不含）—— 后端自动计算，AI 可填 0
+    #[serde(default)]
     pub end: usize,
-    /// 原文片段（应与原文 start..end 子串一致）
+    /// 原文片段（用于在原文中精确匹配定位）
     pub original: String,
     /// 建议替换为
     pub suggestion: String,
@@ -333,7 +336,6 @@ pub async fn proofread_document(
 
     let body = json!({
         "model": &cfg.model,
-        "max_tokens": 8192,
         "temperature": 0.2,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -346,7 +348,126 @@ pub async fn proofread_document(
     parse_proofread_response(&response, text)
 }
 
+/// 流式校对：SSE 逐 token 解析，查出一条回调一条（取消标志 AtomicBool 控制）
+/// - 后端自动通过文本匹配定位偏移，AI 无需计算 start/end
+/// - 解析到完整 JSON 对象后立刻回调，实现"查出一条渲染一条"
+pub async fn proofread_document_streaming(
+    text: &str,
+    config: &AIConfig,
+    cancel_flag: Arc<AtomicBool>,
+    mut on_item: impl FnMut(ProofreadItem),
+) -> Result<(), AIError> {
+    if config.api_key.is_empty() {
+        return Err(AIError::NotConfigured);
+    }
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+
+    let prompt = build_proofread_prompt(text);
+    let system_prompt = "你是一位严谨的中文公文校对专家。请严格只输出 JSON 数组，不要任何解释、不要 markdown 代码块。";
+
+    let mut cfg = config.clone();
+    cfg.thinking_enabled = false;
+
+    let body = json!({
+        "model": &cfg.model,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    });
+    let body = apply_thinking_params(body, &cfg);
+
+    let text_ref = text.to_string();
+    let len = text.chars().count();
+
+    // 流式缓冲：累积 JSON 并逐对象解析
+    let buf = Arc::new(Mutex::new(String::new()));
+    let consumed_pos = Arc::new(Mutex::new(0usize));
+
+    let _full = send_ai_request_streaming(&cfg, body, {
+        let buf = buf.clone();
+        let consumed_pos = consumed_pos.clone();
+        let cancel_flag = cancel_flag.clone();
+        let text = text_ref.clone();
+        move |token| {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return;
+            }
+
+            let mut b = buf.lock().unwrap();
+            b.push_str(&token);
+
+            let mut consumed = consumed_pos.lock().unwrap();
+            let rest = &b[*consumed..];
+
+            // 状态机：数括号深度来检测完整 JSON 对象
+            let mut depth: i32 = 0;
+            let mut in_str = false;
+            let mut esc = false;
+            let mut obj_start: Option<usize> = None;
+
+            for (i, ch) in rest.char_indices() {
+                if esc {
+                    esc = false;
+                    continue;
+                }
+                if ch == '\\' && in_str {
+                    esc = true;
+                    continue;
+                }
+                if ch == '"' {
+                    in_str = !in_str;
+                    continue;
+                }
+                if in_str {
+                    continue;
+                }
+
+                if ch == '{' {
+                    if depth == 0 {
+                        obj_start = Some(i);
+                    }
+                    depth += 1;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = obj_start {
+                            let obj_slice = &rest[start..=i];
+                            // 尝试解析为 ProofreadItem
+                            if let Ok(item) = serde_json::from_str::<ProofreadItem>(obj_slice) {
+                                if !item.suggestion.trim().is_empty() {
+                                    // 文本匹配定位
+                                    if let Some(pos) = char_find(&text, &item.original) {
+                                        let olen = item.original.chars().count();
+                                        let s = pos;
+                                        let e = pos + olen;
+                                        if s < e && e <= len {
+                                            let mut final_item = item.clone();
+                                            final_item.start = s;
+                                            final_item.end = e;
+                                            on_item(final_item);
+                                        }
+                                    }
+                                }
+                            }
+                            obj_start = None;
+                        }
+                        // 标记该对象已被消费
+                        *consumed = *consumed + i + 1;
+                    }
+                }
+            }
+        }
+    }).await?;
+
+    Ok(())
+}
+
 /// 构建校对提示词
+/// 注意：AI 不需要计算 start/end 偏移（后端自动通过文本匹配定位），大幅提升速度
 fn build_proofread_prompt(text: &str) -> String {
     format!(
         r#"你是一位严谨的中文公文校对专家。请校对下面【原文】中的文本，找出错误并给出修改建议。
@@ -374,14 +495,14 @@ fn build_proofread_prompt(text: &str) -> String {
 ## 严格要求
 1. 高精度优先：只报告你有把握的错误，不确定的不要报。语义层面的逻辑矛盾、语义冗余不在此范围，交给其他技能处理。
 2. 专有表述/术语（含人名、机构、会议、文件等）应核对标准写法：明显字错、名称过时、错误搭配、以及标准表述的完整性缺失（如漏写"新时代"）都可报；但不要改写本就正确规范的既有表述、规范译名或存疑名称；数字、日期、引用原文不得改动。
-3. 下标必须严格对应【原文】的字符位置：start 为起始字符下标（从 0 起，含），end 为结束下标（不含）。换行符也算一个字符，务必数准。
-4. original 必须是【原文】中 start..end 对应的真实子串，与原文字符完全一致。
+3. original 必须精确复制【原文】中的错误片段，一字不差，系统将自动用它来定位。
+4. start 和 end 无需计算，统一填 0 即可（后端自动匹配定位）。
 5. 只输出 JSON 数组，不要任何解释、不要 markdown 代码块、不要用 ```json 包裹。
 6. 若全文无误，输出空数组 []。
 
 ## 输出格式
 [
-  {{"category":"错别字|的地得|成语|量词|标点|语法|用词|格式|术语","start":0,"end":2,"original":"原词","suggestion":"改词","reason":"简短原因"}}
+  {{"category":"错别字|的地得|成语|量词|标点|语法|用词|格式|术语","start":0,"end":0,"original":"原词","suggestion":"改词","reason":"简短原因"}}
 ]
 
 ## 原文
@@ -390,7 +511,7 @@ fn build_proofread_prompt(text: &str) -> String {
     )
 }
 
-/// 解析校对响应：容错剥离代码块、截取数组、校验偏移与原文一致性
+/// 解析校对响应：容错剥离代码块、截取数组、用文本匹配定位偏移（不信任 AI 的 start/end）
 fn parse_proofread_response(raw: &str, text: &str) -> Result<Vec<ProofreadItem>, AIError> {
     // 1. 剥离可能的 ```json / ``` 围栏
     let cleaned = strip_code_fences(raw);
@@ -404,7 +525,6 @@ fn parse_proofread_response(raw: &str, text: &str) -> Result<Vec<ProofreadItem>,
     let parsed: Vec<ProofreadItem> = match serde_json::from_str::<Vec<ProofreadItem>>(arr_str) {
         Ok(v) => v,
         Err(e) => {
-            // 解析失败不整体报错，返回空（避免一次格式问题卡死整个功能）
             eprintln!("[AiPen] 校对结果 JSON 解析失败: {}", e);
             return Ok(Vec::new());
         }
@@ -413,24 +533,21 @@ fn parse_proofread_response(raw: &str, text: &str) -> Result<Vec<ProofreadItem>,
     let len = text.chars().count();
     let mut items = Vec::with_capacity(parsed.len());
     for mut it in parsed {
-        // 偏移合法性校验（字符空间）
-        if it.start >= it.end || it.end > len {
+        // 建议为空视为无需修改
+        if it.suggestion.trim().is_empty() {
             continue;
         }
-        // 原文片段一致性校验：若与偏移子串不符，尝试在字符空间内重定位 original
-        let slice: String = text.chars().skip(it.start).take(it.end - it.start).collect();
-        if slice != it.original {
-            match char_find(text, &it.original) {
-                Some(pos) => {
-                    let olen = it.original.chars().count();
-                    it.start = pos;
-                    it.end = pos + olen;
-                }
-                None => continue, // 无法定位，丢弃该项
+        // 始终用文本匹配定位（不信任 AI 的 start/end，大幅提升速度）
+        match char_find(text, &it.original) {
+            Some(pos) => {
+                let olen = it.original.chars().count();
+                it.start = pos;
+                it.end = pos + olen;
             }
+            None => continue, // 无法定位，丢弃该项
         }
-        // 建议为空视为无需修改，忽略
-        if it.suggestion.trim().is_empty() {
+        // 边界校验
+        if it.start >= it.end || it.end > len {
             continue;
         }
         items.push(it);

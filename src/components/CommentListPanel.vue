@@ -42,7 +42,7 @@ function switchTab(tab: 'comment' | 'compare' | 'proofread') {
 }
 
 // ── 三 section 存在性 ──
-const hasProofread = computed(() => proofreadStore.hasItems && !props.hideProofread)
+const hasProofread = computed(() => (proofreadStore.hasItems || proofreadStore.loading) && !props.hideProofread)
 /** 同时存在多个 section 时才显示 tab 栏，否则只显示单标题 */
 const showTabs = computed(() => {
   const n = (hasComments.value ? 1 : 0) + (hasCompare.value ? 1 : 0) + (hasProofread.value ? 1 : 0)
@@ -311,57 +311,68 @@ defineExpose({ open: panelOpen })
         <!-- ── 校对内容 ── -->
         <template v-if="hasProofread">
           <div v-show="activeTab === 'proofread'" class="proofread-panel-body">
-            <div v-if="proofreadStore.manualRun" class="pf-stat">🔄 校对进行中…</div>
-            <div v-else-if="proofreadStore.manualRun && proofreadStore.error" class="pf-stat pf-error">{{ proofreadStore.error }}</div>
-            <template v-else>
-              <div v-if="proofreadStore.suppressed > 0" class="pf-stat pf-muted">
-                已抑制 {{ proofreadStore.suppressed }} 条正词命中
-              </div>
-              <ol class="comment-list-items">
-                <li
-                  v-for="it in proofreadStore.items"
-                  :key="it.id"
-                  class="comment-list-item"
-                >
-                  <div class="pf-item-top">
-                    <span class="pf-cat">{{ it.category }}</span>
-                    <span class="pf-old">{{ it.original }}</span>
-                    <span class="pf-arrow">→</span>
-                    <span class="pf-new">{{ it.suggestion }}</span>
-                  </div>
-                  <div v-if="it.reason" class="pf-reason">{{ it.reason }}</div>
-                  <div class="comment-list-bottom">
-                    <div class="comment-list-meta">位置 {{ it.from }}</div>
-                    <div class="comment-list-actions">
-                      <button class="comment-list-btn" @click="jumpProofread(it.id)">📍 跳转</button>
-                      <button class="comment-list-btn" @click="replaceProofread(it.id)">✎ 替换</button>
-                      <button class="comment-list-btn" @click="addAsCorrectWord(it.original)" title="标记为正确，抑制此类误报">✓ 正词</button>
-                      <button class="comment-list-btn comment-list-btn-danger" @click="ignoreIssue(it.id)">忽略</button>
-                    </div>
-                  </div>
-                </li>
-              </ol>
+            <!-- 进行中状态条：与实时结果同显 -->
+            <div v-if="proofreadStore.loading" class="pf-stat pf-muted">🔄 {{ proofreadStore.progressMsg || '校对进行中…' }}</div>
+            <div v-if="proofreadStore.error" class="pf-stat pf-error">{{ proofreadStore.error }}</div>
 
-              <!-- 正词管理 -->
-              <div class="pf-words">
-                <button class="pf-words-toggle" @click="showWords = !showWords">
-                  {{ showWords ? '▾' : '▸' }} 正词管理 ({{ proofreadStore.correctWords.length }})
-                </button>
-                <div v-if="showWords" class="pf-words-body">
-                  <div class="pf-words-list">
-                    <span v-for="w in proofreadStore.correctWords" :key="w" class="pf-word">
-                      {{ w }}
-                      <button class="pf-word-x" title="删除" @click="removeCorrectWord(w)">✕</button>
-                    </span>
-                    <span v-if="proofreadStore.correctWords.length === 0" class="pf-words-empty">暂无正词</span>
-                  </div>
-                  <div class="pf-words-add">
-                    <input v-model="newWord" placeholder="添加正词…" @keyup.enter="addNewWord" />
-                    <button class="comment-list-btn" @click="addNewWord">添加</button>
+            <div v-if="proofreadStore.suppressed > 0" class="pf-stat pf-muted">
+              已抑制 {{ proofreadStore.suppressed }} 条正词命中
+            </div>
+            <div v-if="proofreadStore.warnings.length" class="pf-stat pf-warn">
+              ⚠ {{ proofreadStore.warnings.join('；') }}
+            </div>
+
+            <!-- 结果列表：加载中也会随事件实时增长 -->
+            <ol v-if="proofreadStore.items.length" class="comment-list-items">
+              <li
+                v-for="it in proofreadStore.items"
+                :key="it.id"
+                class="comment-list-item"
+              >
+                <div class="pf-item-top">
+                  <span class="pf-cat">{{ it.category }}</span>
+                  <span class="pf-old">{{ it.original }}</span>
+                  <span class="pf-arrow">→</span>
+                  <span class="pf-new">{{ it.suggestion }}</span>
+                </div>
+                <div v-if="it.reason" class="pf-reason">{{ it.reason }}</div>
+                <div class="comment-list-bottom">
+                  <div class="comment-list-meta">位置 {{ it.from }}</div>
+                  <div class="comment-list-actions">
+                    <button class="comment-list-btn" @click="jumpProofread(it.id)">📍 跳转</button>
+                    <button class="comment-list-btn" @click="replaceProofread(it.id)">✎ 替换</button>
+                    <button class="comment-list-btn" @click="addAsCorrectWord(it.original)" title="标记为正确，抑制此类误报">✓ 正词</button>
+                    <button class="comment-list-btn comment-list-btn-danger" @click="ignoreIssue(it.id)">忽略</button>
                   </div>
                 </div>
+              </li>
+            </ol>
+            <div
+              v-else-if="!proofreadStore.loading && !proofreadStore.error && proofreadStore.cleanHint"
+              class="pf-stat pf-muted"
+            >
+              未发现问题
+            </div>
+
+            <!-- 正词管理 -->
+            <div class="pf-words">
+              <button class="pf-words-toggle" @click="showWords = !showWords">
+                {{ showWords ? '▾' : '▸' }} 正词管理 ({{ proofreadStore.correctWords.length }})
+              </button>
+              <div v-if="showWords" class="pf-words-body">
+                <div class="pf-words-list">
+                  <span v-for="w in proofreadStore.correctWords" :key="w" class="pf-word">
+                    {{ w }}
+                    <button class="pf-word-x" title="删除" @click="removeCorrectWord(w)">✕</button>
+                  </span>
+                  <span v-if="proofreadStore.correctWords.length === 0" class="pf-words-empty">暂无正词</span>
+                </div>
+                <div class="pf-words-add">
+                  <input v-model="newWord" placeholder="添加正词…" @keyup.enter="addNewWord" />
+                  <button class="comment-list-btn" @click="addNewWord">添加</button>
+                </div>
               </div>
-            </template>
+            </div>
 
             <!-- 校对底部 -->
             <div class="comment-panel-foot">
@@ -615,6 +626,10 @@ defineExpose({ open: panelOpen })
 }
 .pf-stat.pf-muted {
   color: #6b7280;
+}
+.pf-stat.pf-warn {
+  color: #b45309;
+  white-space: pre-line;
 }
 .pf-item-top {
   display: flex;
@@ -970,6 +985,9 @@ defineExpose({ open: panelOpen })
 }
 .dark .pf-stat.pf-muted {
   color: #94a3b8;
+}
+.dark .pf-stat.pf-warn {
+  color: #fbbf24;
 }
 .dark .pf-cat {
   color: #f87171;

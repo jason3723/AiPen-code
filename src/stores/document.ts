@@ -132,6 +132,7 @@ export interface AIConfig {
   model: string;
   thinking_enabled: boolean;
   reasoning_effort: string;  // "high" | "max"
+  proofread_thinking: boolean; // 校对是否用思考；默认 true，关闭可根治"思考占 token 导致截断/变慢"
 }
 
 // ─── 工具函数 ────────────────────────────────────────────────
@@ -351,6 +352,7 @@ export const useDocumentStore = defineStore("document", () => {
     model: "deepseek-v4-flash",
     thinking_enabled: false,
     reasoning_effort: "high",
+    proofread_thinking: true,
   });
 
   // ── UI 状态 ──
@@ -1034,6 +1036,7 @@ export const useDocumentStore = defineStore("document", () => {
         model: config.model,
         thinkingEnabled: config.thinking_enabled,
         reasoningEffort: config.reasoning_effort,
+        proofreadThinking: config.proofread_thinking,
       });
       apiConfig.value = config;
     } catch (err) {

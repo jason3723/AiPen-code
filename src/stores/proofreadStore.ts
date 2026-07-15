@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useCompareStore } from './compareStore'
 import { buildPlainTextAndMapRange } from '../utils/docOffset'
 
@@ -73,8 +74,18 @@ export const useProofreadStore = defineStore('proofread', () => {
   const error = ref<string | null>(null)
   /** 本次运行中被正词抑制掉的条数（用于面板提示） */
   const suppressed = ref(0)
+  /** 流式进度文案（CommentListPanel 模板引用，loading 期间显示） */
+  const progressMsg = ref('')
+  /** 流式期间的警告信息（CommentListPanel 模板引用 .warnings.length） */
+  const warnings = ref<string[]>([])
   /** 当前文档 id（initDoc 防重复清） */
   const currentDocId = ref<string>('')
+
+  // ── 流式校对事件监听 ──
+  let _unlistenItem: UnlistenFn | null = null
+  let _unlistenDone: UnlistenFn | null = null
+  /** 轮次 ID：防御新旧流事件混入；每次 runProofread / cancelProofread 自增 */
+  let _runId = 0
 
   const hasItems = computed(() => items.value.length > 0)
   const itemCount = computed(() => items.value.length)
@@ -89,13 +100,21 @@ export const useProofreadStore = defineStore('proofread', () => {
     return correctWords.value.some((w) => norm(w) === t)
   }
 
-  /** 执行校对：传入 ProseMirror doc；可选选区范围（含则只校选区）。manual=true 时显示"面板弹出前"进度提示 */
+  /** 执行校对：流式 SSE，逐条 JSON 解析渲染；支持取消。manual=true 时显示进度提示 */
   async function runProofread(doc: any, from?: number, to?: number, opts?: { manual?: boolean }) {
     const manual = opts?.manual ?? true
+
+    // 清理上一轮的监听器（旧流事件无监听自然丢弃），开新轮次 ID
+    cleanupListeners()
+    const runId = ++_runId
+
     error.value = null
     cleanHint.value = false
     loading.value = true
+    progressMsg.value = '校对进行中…'
+    warnings.value = []
     if (manual) manualRun.value = true
+
     try {
       const size = doc?.content?.size ?? 0
       const f = from ?? 0
@@ -105,52 +124,100 @@ export const useProofreadStore = defineStore('proofread', () => {
         items.value = []
         suppressed.value = 0
         loading.value = false
+        manualRun.value = false
         return
       }
 
-      const raw = await invoke<RawProofreadItem[]>('proofread', { text })
+      // 清空上一轮结果
+      items.value = []
+      suppressed.value = 0
+      let suppressedCount = 0    // 闭包内累积计数
+      let receivedCount = 0      // 已接收条数
 
-      const issues: ProofreadIssue[] = []
-      let suppressedCount = 0
-      for (const it of raw) {
+      // 设置流式事件监听
+      _unlistenItem = await listen<RawProofreadItem>('proofread:item', (event) => {
+        if (_runId !== runId) return   // 过期事件（来自旧流），丢弃
+        const it = event.payload
         if (isCorrectWord(it.original)) {
           suppressedCount++
-          continue
+          return
         }
         const a = map[it.start]
         const b = it.end > 0 ? map[it.end - 1] + 1 : a + 1
-        if (a == null || b == null) continue
-        issues.push({
-          id: genId(),
+        if (a == null || b == null) return
+        const id = genId()
+        items.value = [...items.value, {
+          id,
           category: it.category,
           original: it.original,
           suggestion: it.suggestion,
           reason: it.reason,
           from: a,
           to: Math.max(b, a + 1),
-        })
-      }
+        }]
+        receivedCount++
+        progressMsg.value = `已发现 ${items.value.length} 处问题…`
+      })
 
-      items.value = issues
-      suppressed.value = suppressedCount
+      _unlistenDone = await listen<{ ok: boolean; error?: string }>('proofread:done', (event) => {
+        if (_runId !== runId) return   // 过期事件（来自旧流/已取消），丢弃
+        const { ok, error: errMsg } = event.payload
+        suppressed.value = suppressedCount
+        progressMsg.value = ''
 
-      // 有结果才打开面板（复用统一抽屉）
-      if (issues.length > 0) {
-        const compare = useCompareStore()
-        compare.panelOpen = true
-        compare.activeTab = 'proofread'
-      } else if (manual) {
-        // 手动校对且无问题：弹"未发现问题"提示，约 2.5 秒后自动销毁
-        cleanHint.value = true
-        if (_cleanHintTimer) clearTimeout(_cleanHintTimer)
-        _cleanHintTimer = setTimeout(() => { cleanHint.value = false }, 2500)
-      }
+        // 有结果时打开面板
+        if (receivedCount > 0) {
+          const compare = useCompareStore()
+          compare.panelOpen = true
+          compare.activeTab = 'proofread'
+        } else if (manual && ok) {
+          // 手动校对且无问题：弹"未发现问题"提示
+          cleanHint.value = true
+          if (_cleanHintTimer) clearTimeout(_cleanHintTimer)
+          _cleanHintTimer = setTimeout(() => { cleanHint.value = false }, 2500)
+        }
+
+        if (!ok && errMsg) {
+          error.value = errMsg
+        }
+
+        loading.value = false
+        if (manual) manualRun.value = false
+
+        // 清理监听
+        cleanupListeners()
+      })
+
+      // 触发流式校对（非阻塞 invoke，结果由事件通知）
+      await invoke('proofread_stream', { text })
     } catch (e: any) {
-      error.value = typeof e === 'string' ? e : e?.message ?? '校对失败'
-    } finally {
-      loading.value = false
-      if (manual) manualRun.value = false
+      if (loading.value) {
+        error.value = typeof e === 'string' ? e : e?.message ?? '校对失败'
+        loading.value = false
+        if (manual) manualRun.value = false
+      }
+      cleanupListeners()
     }
+  }
+
+  /** 取消当前校对（设置后端取消标志，递增轮次使在途事件失效，清理前端状态） */
+  async function cancelProofread() {
+    // 递增轮次使所有在途旧事件在 handler 中被 _runId !== runId 过滤掉
+    _runId++
+    // 通知后端取消
+    invoke('cancel_proofread').catch(() => {})
+    // 立即清理前端监听和状态
+    cleanupListeners()
+    loading.value = false
+    manualRun.value = false
+    progressMsg.value = ''
+    warnings.value = []
+  }
+
+  /** 清理事件监听器 */
+  function cleanupListeners() {
+    if (_unlistenItem) { _unlistenItem(); _unlistenItem = null }
+    if (_unlistenDone) { _unlistenDone(); _unlistenDone = null }
   }
 
   /** 忽略一条（从结果列表移除） */
@@ -189,6 +256,8 @@ export const useProofreadStore = defineStore('proofread', () => {
   function clearAll() {
     items.value = []
     suppressed.value = 0
+    progressMsg.value = ''
+    warnings.value = []
     const compare = useCompareStore()
     compare.panelOpen = false
   }
@@ -215,6 +284,8 @@ export const useProofreadStore = defineStore('proofread', () => {
     currentDocId.value = id
     items.value = []
     suppressed.value = 0
+    progressMsg.value = ''
+    warnings.value = []
   }
 
   return {
@@ -226,6 +297,8 @@ export const useProofreadStore = defineStore('proofread', () => {
     cleanHint,
     error,
     suppressed,
+    progressMsg,
+    warnings,
     currentDocId,
     // computed
     hasItems,
@@ -233,6 +306,7 @@ export const useProofreadStore = defineStore('proofread', () => {
     // methods
     isCorrectWord,
     runProofread,
+    cancelProofread,
     ignore,
     addCorrectWord,
     removeCorrectWord,

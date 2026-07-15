@@ -392,6 +392,67 @@ pub async fn proofread(
         .map_err(|e| e.to_string())
 }
 
+/// 流式校对：逐条 JSON 解析，查出就 emit 事件，前端增量渲染
+#[tauri::command]
+pub async fn proofread_stream(
+    app_handle: tauri::AppHandle,
+    state: State<'_, crate::AppState>,
+    text: String,
+) -> Result<(), String> {
+    // 重置取消标志
+    state.proofread_cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let config = {
+        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?;
+        cfg.clone()
+    };
+
+    let cancel_flag = state.proofread_cancel.clone();
+    let handle = app_handle.clone();
+
+    let result = ai::proofread_document_streaming(
+        &text,
+        &config,
+        cancel_flag,
+        move |item| {
+            let _ = handle.emit("proofread:item", serde_json::json!({
+                "category": item.category,
+                "start": item.start,
+                "end": item.end,
+                "original": item.original,
+                "suggestion": item.suggestion,
+                "reason": item.reason,
+            }));
+        },
+    ).await;
+
+    match result {
+        Ok(()) => {
+            // 已被取消 → 不发射 done 事件（避免干扰新一轮校对）
+            if !state.proofread_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = app_handle.emit("proofread:done", serde_json::json!({"ok": true}));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if !state.proofread_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                let err_msg = e.to_string();
+                let _ = app_handle.emit("proofread:done", serde_json::json!({"ok": false, "error": err_msg}));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// 取消当前正在进行的校对（设置标志位，流式函数检测到后停止消费 token）
+#[tauri::command]
+pub async fn cancel_proofread(
+    state: State<'_, crate::AppState>,
+) -> Result<(), String> {
+    state.proofread_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_analysis(
     state: State<'_, crate::AppState>,
