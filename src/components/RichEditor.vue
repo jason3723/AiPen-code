@@ -1095,6 +1095,12 @@ Vue.watch(
       syncing = true
       ed.view.dispatch(tr)
       syncing = false
+      // 清理被 syncing 早退吞掉的回流：让 currentContent 更新，交给 1 秒防抖落库
+      const json = ed.getJSON()
+      const current = typeof props.modelValue === 'object' ? props.modelValue : null
+      if (stableJSON(json) !== stableJSON(current)) {
+        emit('update:modelValue', json)
+      }
     }
   },
   { deep: true },
@@ -1393,6 +1399,12 @@ const editor = useEditor({
         if (tr.docChanged) ed.view.dispatch(tr)
       }
       syncing = false
+      // 同上：孤儿 mark 清理后回流到 currentContent，交给 1 秒防抖落库
+      const json = ed.getJSON()
+      const current = typeof props.modelValue === 'object' ? props.modelValue : null
+      if (stableJSON(json) !== stableJSON(current)) {
+        emit('update:modelValue', json)
+      }
     })
   },
   onSelectionUpdate() {
