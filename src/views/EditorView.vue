@@ -113,14 +113,6 @@ const titleInput = ref("");
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(false);
 
-// F3: 任意模块"加入比对"后，自动展开右侧抽屉（沿用文档模块"加入比对 → 面板打开"行为）
-watch(
-  () => compareStore.panelOpen,
-  (open) => {
-    if (open) rightCollapsed.value = false;
-  },
-);
-
 // "对话"按钮（素材工具栏/候选面板）切换 Chat Tab 时，自动展开右侧栏
 watch(
   () => store.sidebarTab,

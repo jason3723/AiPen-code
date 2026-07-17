@@ -529,27 +529,6 @@ const appVersion = pkg.version;
       </p>
     </div>
 
-    <!-- 校对专用思考开关 -->
-    <div>
-      <div class="flex items-center justify-between">
-        <label class="text-xs text-gray-400 dark:text-gray-500">校对使用思考</label>
-        <button
-          type="button"
-          class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none"
-          :class="apiConfig.proofread_thinking ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'"
-          @click="apiConfig.proofread_thinking = !apiConfig.proofread_thinking"
-        >
-          <span
-            class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
-            :class="apiConfig.proofread_thinking ? 'translate-x-[1.1rem]' : 'translate-x-0.5'"
-          />
-        </button>
-      </div>
-      <p class="text-xs text-gray-500 dark:text-gray-600 mt-1">
-        关闭可避免长文校对因思考占用 token 而截断、变慢（仅影响校对，写作仍按上方思考设置）
-      </p>
-    </div>
-
     <!-- 操作按钮 -->
     <div class="flex gap-2">
       <button

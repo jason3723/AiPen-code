@@ -1,11 +1,11 @@
 {
-  "version": "4.2.8",
-  "notes": "## v4.2.8 (2026-07-15)\n\n### 🐛 修复\n\n- **校对面板抽拉按钮和面板不可见**：`CommentListPanel.vue` 模板引用了 `proofreadStore.progressMsg` 和 `proofreadStore.warnings`，但 store 未声明/导出这两个字段，导致 Vue 渲染时 `(undefined).length` 抛出 TypeError，整组件崩溃。已在 store 中补齐两个字段并在所有生命周期中管理其值。\n- **工具栏校对图标点击后一直处于选中高亮状态**：按钮激活逻辑从 `loading || (panelOpen \u0026\u0026 activeTab === 'proofread')` 改为仅 `loading`。校对完成后面板自动打开时按钮恢复正常态。\n",
-  "pub_date": "2026-07-15T06:59:00Z",
+  "pub_date": "2026-07-17T05:49:05Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkwzMy90VXl3dzdnYzB0N3MrZEQ1eXEyVlYweW5sOW9EbFYrOGtwQnI3a0RkY2dLMkt3M3dCbXkrUDFHM2NDWDZURzk0ZEFPZDJUeHlyRk9JUDV0b1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDk4NzEyCWZpbGU6QWlQZW5fNC4yLjhfeDY0LXNldHVwLmV4ZQpTNjVpOFpibkgzWk1tT2dpVW8wa2NrdkpvZEZoaUU3MUxpcVRqM3ltY2c1ZUhCUlRaM3YrRFpWeDVRdmU5dm5uNEtZa0hERVVzTlVyT0hQendwNnZDZz09Cg==",
-      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.2.8_x64-setup.exe"
+      "url": "https://exe1.webgetstore.com/2026/07/17/c8a67d1a69efe5edc934d304b50c9178.exe?sg=94a9f2dea29e7f4050188b793e13a064&e=6a59c395&fileName=AiPen_4.3.0_x64-setup.exe&fi=298904052",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkxGTDlJWjJMdDNZcGdpZXpZS1czVkZmNEI4NUN5ZHl6aVJLMlBEektpSzBVWk8ybjdBRzhnbGIzbmpyRGU1N0V1VFE3TTdUbk94VCsxRnVlTUdFOVF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MjY3MzAzCWZpbGU6QWlQZW5fNC4zLjBfeDY0LXNldHVwLmV4ZQpNaUNpM0NvUU0xM3R0eUhhT0pLSkdubEpUem54eHkwZEhTNU1lcGtFS3VSRG5PUEZLTXlDWTB3RFM1KzVQanlEYzR2QUJOOG1iV3FvTytBL3RaNWlEUT09Cg=="
     }
-  }
+  },
+  "version": "4.3.0",
+  "notes": "## v4.3.0 (2026-07-17)\r\n\r\n### 🐛 修复\r\n\r\n- **导出 Word 偶发「字体颜色」错误**：从外部（网页 / Word / 其它编辑器）粘贴进来的文字，其颜色常被浏览器序列化为 `rgb(255,0,0)` / `rgba(...)` 甚至颜色名 `red` 等非标准格式，原样透传到 `w:color` 字段后 Word 无法识别而报错。导出处新增 `normalizeColor()`，将任意来源颜色统一规范化为 6 位大写 hex（兼容 `rgb()`/`#rgb`/`#rrggbb`/颜色名，无法识别则丢弃该颜色），与高亮色处理口径保持一致，覆盖粘贴与历史文档等所有来源且不改动编辑器运行时。\r\n\r\n---"
 }

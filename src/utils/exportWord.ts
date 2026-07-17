@@ -201,6 +201,48 @@ function mapHighlightColor(color: string | undefined | null): string | undefined
   return best;
 }
 
+// ── 文字颜色规范化：任意来源颜色 → 6 位大写 hex ────────
+// 兼容 #rgb / #rrggbb / rgb() / rgba() / 颜色名，非法值返回 undefined（不输出该颜色）
+const COLOR_NAMES: Record<string, string> = {
+  black: '000000', silver: 'C0C0C0', gray: '808080', white: 'FFFFFF',
+  maroon: '800000', red: 'FF0000', purple: '800080', fuchsia: 'FF00FF',
+  green: '008000', lime: '00FF00', olive: '808000', yellow: 'FFFF00',
+  navy: '000080', blue: '0000FF', teal: '008080', aqua: '00FFFF',
+  orange: 'FFA500', pink: 'FFC0CB', cyan: '00FFFF', magenta: 'FF00FF',
+  brown: 'A52A2A', gold: 'FFD700',
+};
+
+function normalizeColor(color: string | undefined | null): string | undefined {
+  if (!color) return undefined;
+  const c = color.trim().toLowerCase();
+  if (!c) return undefined;
+
+  // 颜色名
+  if (COLOR_NAMES[c]) return COLOR_NAMES[c];
+
+  // rgb() / rgba()
+  const rgba = c.match(/^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  if (rgba) {
+    const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
+    return toHex(parseInt(rgba[1])) + toHex(parseInt(rgba[2])) + toHex(parseInt(rgba[3]));
+  }
+
+  // #rgb / #rrggbb（忽略可能的 #rrggbbaa 透明度）
+  const hex = c.replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/.test(hex)) {
+    return hex.split('').map((ch) => ch + ch).join('').toUpperCase();
+  }
+  if (/^[0-9a-f]{6}$/.test(hex)) {
+    return hex.toUpperCase();
+  }
+  if (/^[0-9a-f]{8}$/.test(hex)) {
+    return hex.substring(0, 6).toUpperCase();
+  }
+
+  // 无法识别 → 不输出颜色，避免生成非法 w:color
+  return undefined;
+}
+
 // ── 内联文本解析（应用 marks → TextRun） ─────────────────
 function buildTextRuns(
   node: PMNode,
@@ -272,7 +314,7 @@ function buildTextRuns(
       italics: italic,
       underline: underline ? { type: 'single' } : undefined,
       strike,
-      color: color || undefined,
+      color: normalizeColor(color),
       superScript: superscript || undefined,
       subScript: subscript || undefined,
       // 只有当 highlight mark 真的存在时才输出 highlight 字段
