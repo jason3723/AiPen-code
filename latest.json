@@ -1,11 +1,11 @@
 {
-  "pub_date": "2026-07-17T05:49:05Z",
+  "pub_date": "2026-07-17T13:01:48Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://exe1.webgetstore.com/2026/07/17/c8a67d1a69efe5edc934d304b50c9178.exe?sg=94a9f2dea29e7f4050188b793e13a064&e=6a59c395&fileName=AiPen_4.3.0_x64-setup.exe&fi=298904052",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVkxGTDlJWjJMdDNZcGdpZXpZS1czVkZmNEI4NUN5ZHl6aVJLMlBEektpSzBVWk8ybjdBRzhnbGIzbmpyRGU1N0V1VFE3TTdUbk94VCsxRnVlTUdFOVF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MjY3MzAzCWZpbGU6QWlQZW5fNC4zLjBfeDY0LXNldHVwLmV4ZQpNaUNpM0NvUU0xM3R0eUhhT0pLSkdubEpUem54eHkwZEhTNU1lcGtFS3VSRG5PUEZLTXlDWTB3RFM1KzVQanlEYzR2QUJOOG1iV3FvTytBL3RaNWlEUT09Cg=="
+      "url": "https://exe1.webgetstore.com/2026/07/17/5bcd91e38359286040449add9496e011.exe?sg=7152de014226504b7394e44206cff327&e=6a5a26be&fileName=AiPen_4.3.1_x64-setup.exe&fi=299003458",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk4xdUxESjdsbXR1Y1lYSmZVYUtsQ3NPRVJnZGxQMm9scUVSOFRaNXdSR2RiU0xya3hFZ0xkMXlybnRIOTVmaHV5YlBPTmxYdTF6ZUdWSWN6c2pmSGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MjkyNjk1CWZpbGU6QWlQZW5fNC4zLjFfeDY0LXNldHVwLmV4ZQpUeUV4cktoZWo0YTR5U1lJWkhIbWRidm1Zd0NUUm5yc0ZuRzlrVS8ySkV2WlQwQnNGN1U2VytWcFpSOFZGU3ErcThkeDhhYmdBa2lOZEJYYzIyYmJEUT09Cg=="
     }
   },
-  "version": "4.3.0",
-  "notes": "## v4.3.0 (2026-07-17)\r\n\r\n### 🐛 修复\r\n\r\n- **导出 Word 偶发「字体颜色」错误**：从外部（网页 / Word / 其它编辑器）粘贴进来的文字，其颜色常被浏览器序列化为 `rgb(255,0,0)` / `rgba(...)` 甚至颜色名 `red` 等非标准格式，原样透传到 `w:color` 字段后 Word 无法识别而报错。导出处新增 `normalizeColor()`，将任意来源颜色统一规范化为 6 位大写 hex（兼容 `rgb()`/`#rgb`/`#rrggbb`/颜色名，无法识别则丢弃该颜色），与高亮色处理口径保持一致，覆盖粘贴与历史文档等所有来源且不改动编辑器运行时。\r\n\r\n---"
+  "notes": "## v4.3.1 (2026-07-17)\r\n\r\n### 🐛 修复\r\n\r\n- **删除批注后批注重现**：删除批注时清理正文下划虚线 mark 的动作被同步标记早退拦截，未回流到 currentContent，导致 1 秒防抖保存未触发、草稿里仍存旧数据；切文档再切回时批注与下划线重新出现。修复点在 RichEditor.vue 两处 ghost/孤儿 mark 清理后显式回流当前 JSON，使其像普通编辑一样触发 1 秒防抖落库（历史版本快照不受影响）。\r\n\r\n---",
+  "version": "4.3.1"
 }
