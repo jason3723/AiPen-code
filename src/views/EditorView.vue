@@ -45,10 +45,11 @@ const appVersion = pkg.version;
 
 // 关于面板动态标语
 const slogans = [
-  "智能写作 · 全流程 AI 辅助",
-  "DeepSeek 驱动 · 管道式创作",
-  "采油人的专属写作助手",
-  "访谈 → 提纲 → 正文 → 审查 → 润色",
+  "智能写作 · 替你把熬过的夜写成光",
+"AI 驱动 · 让文字自己找到归处",
+"不论身在何处，写材料的人都有个搭档",
+"你把思路交给我，我把温暖交给字里行间",
+"AiPen，守在你每个挑灯夜写的时分",
 ];
 const sloganIndex = ref(0);
 let _sloganTimer: number | null = null;
