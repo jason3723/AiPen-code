@@ -474,8 +474,9 @@ watch(() => store.currentDocId, (id) => {
 }, { immediate: true })
 
 // 从文档模式切换到其他模式时，自动保存草稿
+// 查看历史版本时 currentContent 为版本内容而非草稿，此时离开不得覆盖草稿
 watch(leftSubTab, async (_newTab, oldTab) => {
-  if (oldTab === 'docs' && currentContent.value && store.currentDocId) {
+  if (oldTab === 'docs' && currentContent.value && store.currentDocId && !isViewingHistory.value) {
     try {
       await invoke("save_draft", {
         docId: store.currentDocId,

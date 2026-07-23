@@ -167,7 +167,8 @@ function buildCommentDecorations(
 
 /**
  * 角标渲染 Extension：在 addProseMirrorPlugins 中注入 ProseMirror 插件。
- * map 通过 meta('commentMap', { map }) 传入；doc 变化或 meta 变化都触发重建。
+ * 插件内部持有最新 comment map，comments 变化（meta）或 doc 变化（docChanged，如切换文档）
+ * 都用同一份 map 自动重建角标，无需外部在每个 setContent 后手动补 dispatch。
  */
 const CommentBadgeExt = Extension.create({
   name: 'commentBadge',
@@ -177,28 +178,32 @@ const CommentBadgeExt = Extension.create({
       new Plugin({
         key: commentBadgePluginKey,
         state: {
-          init: (_, state) => {
+          init: () => {
             // 初始 map 为空，由 RichEditor 首次 dispatch 注入
-            return DecorationSet.create(state.doc, [])
+            return { decos: DecorationSet.empty, map: new Map<string, { order: number; orphan: boolean }>() }
           },
-          apply(tr, oldSet, _oldS, newState) {
+          apply(tr, old, _oldS, newState) {
             const meta = tr.getMeta(commentBadgePluginKey) as CommentBadgeMeta | undefined
             if (meta) {
-              return DecorationSet.create(newState.doc, buildCommentDecorations(newState, meta.map))
-            }
-            if (tr.docChanged) {
-              // doc 变化时用同一 map 重建（map 通过最新 dispatch 注入）
-              const currentMap = (newState as any).__commentMap as Map<string, { order: number; orphan: boolean }> | undefined
-              if (currentMap) {
-                return DecorationSet.create(newState.doc, buildCommentDecorations(newState, currentMap))
+              // comments 变化：更新持有的 map，并用它重建
+              return {
+                decos: DecorationSet.create(newState.doc, buildCommentDecorations(newState, meta.map)),
+                map: meta.map,
               }
             }
-            return oldSet
+            if (tr.docChanged && old.map.size > 0) {
+              // doc 被替换（切换文档 / 版本回放等）：用已持有的最新 map 自动重建
+              return {
+                decos: DecorationSet.create(newState.doc, buildCommentDecorations(newState, old.map)),
+                map: old.map,
+              }
+            }
+            return old
           },
         },
         props: {
           decorations(state) {
-            return commentBadgePluginKey.getState(state) ?? DecorationSet.empty
+            return commentBadgePluginKey.getState(state)?.decos ?? DecorationSet.empty
           },
         },
       }),
@@ -1608,61 +1613,41 @@ const editor = useEditor({
 })
 
 // ── 监听外部 modelValue 变更（父组件 → 编辑器） ──
+// 渲染去重：基于「目标文档 id」而非「调用序号」。
+// 同目标重复点击（大文档切换慢时用户补点）不会丢弃第一次渲染；只有「已切到别的文档」才丢弃旧渲染。
 watch(
   () => props.modelValue,
   async (newVal) => {
-    if (!editor.value || syncing) return
-    // 比较当前编辑器内容与外部传入值
+    if (!editor.value) return
     const ed = editor.value
-    if (!ed) return
-
-    if (props.editMode === 'material') {
-      // 素材模式：比较 ProseMirror JSON（与文档模式一致）
-      const currentJson = ed.getJSON()
-      if (typeof newVal === 'object' && stableJSON(newVal) !== stableJSON(currentJson)) {
-        syncing = true
-        syncDepth++
-        // ★ 保存当前光标位置，setContent 后恢复
-        const selFrom = ed.state.selection.from
-        const prepared = await prepareContent(newVal)
-        ed.commands.setContent(prepared)
-        // 尝试恢复到接近原来的位置（文档结构可能已变，尽量恢复）
-        try {
-          const resolvedPos = Math.min(selFrom, ed.state.doc.content.size)
-          ed.commands.setTextSelection(resolvedPos)
-        } catch { /* 位置无效则保持默认 */ }
-        syncDepth = Math.max(0, syncDepth - 1)
-        syncing = false
-        extractHeadings(ed)
+    const myDocId = docStore.currentDocId // 捕获本次切换的目标文档
+    // 立即进入同步态：覆盖整个异步过程，阻止过期 onUpdate 把旧内容写回 currentContent
+    syncing = true
+    syncDepth++
+    try {
+      if (typeof newVal === 'object') {
+        const currentJson = ed.getJSON()
+        if (stableJSON(newVal) !== stableJSON(currentJson)) {
+          const selFrom = ed.state.selection.from
+          const prepared = await prepareContent(newVal)
+          // 期间已切到别的文档 → 本次结果丢弃，交给更新的切换（防串稿）
+          if (myDocId !== docStore.currentDocId) return
+          ed.commands.setContent(prepared)
+          try {
+            const resolvedPos = Math.min(selFrom, ed.state.doc.content.size)
+            ed.commands.setTextSelection(resolvedPos)
+          } catch { /* 位置无效则保持默认 */ }
+          extractHeadings(ed)
+        }
       } else if (typeof newVal === 'string') {
         // 向后兼容：纯文本字符串 → 按段落拆分为 JSON 后设置
-        syncing = true
         await applyContent(newVal)
-        syncing = false
+        if (myDocId !== docStore.currentDocId) return
       }
-    } else {
-      // 文档模式：比较 ProseMirror JSON
-      const currentJson = ed.getJSON()
-      if (typeof newVal === 'object' && stableJSON(newVal) !== stableJSON(currentJson)) {
-        syncing = true
-        syncDepth++
-        // ★ 保存当前光标位置，setContent 后恢复
-        const selFrom = ed.state.selection.from
-        const prepared = await prepareContent(newVal)
-        ed.commands.setContent(prepared)
-        try {
-          const resolvedPos = Math.min(selFrom, ed.state.doc.content.size)
-          ed.commands.setTextSelection(resolvedPos)
-        } catch { /* 位置无效则保持默认 */ }
-        syncDepth = Math.max(0, syncDepth - 1)
-        syncing = false
-        extractHeadings(ed)
-      } else if (typeof newVal === 'string') {
-        // 向后兼容：纯文本字符串 → 按段落拆分为 JSON 后设置
-        syncing = true
-        await applyContent(newVal)
-        syncing = false
-      }
+    } finally {
+      // 无论本次是否仍是最新一次，都解除自身的同步计数，避免竞态后 syncDepth 永久停留导致打字无法回写保存
+      syncDepth = Math.max(0, syncDepth - 1)
+      syncing = syncDepth > 0
     }
   },
 )

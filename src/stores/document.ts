@@ -395,6 +395,10 @@ export const useDocumentStore = defineStore("document", () => {
   // ── 自动保存草稿（防抖 1 秒） ──
   let draftTimer: ReturnType<typeof setTimeout> | null = null;
   let _suppressDraftSave = false; // 阻止程序化 content 变更触发自动保存
+  // 切换去重键：记录「最新一次切换的目标 docId」。
+  // 与"调用序号"去重不同——同目标重复点击（因大文档切换慢而补点）不丢弃第一次，
+  // 只丢弃"被不同文档切换取代"的旧请求，从而既防串稿、又不会把有效切换误丢成"要连点两次"。
+  let _activeSwitchDocId = "";
 
   /** 自动保存状态：idle(无变更) | pending(等待防抖) | saving(写入中) | saved(已保存) | error(失败) */
   const draftSaveStatus = ref<"idle" | "pending" | "saving" | "saved" | "error">("idle");
@@ -430,13 +434,15 @@ export const useDocumentStore = defineStore("document", () => {
     // 内容变更 → 进入等待防抖状态
     draftSaveStatus.value = "pending";
 
+    const _snapId = currentDocId.value;                       // 触发那一刻的 docId
+    const _snapContent = serializeContent(newVal, comments.value);
     if (draftTimer) clearTimeout(draftTimer);
     draftTimer = setTimeout(async () => {
       draftSaveStatus.value = "saving";
       try {
         await invoke("save_draft", {
-          docId: currentDocId.value,
-          content: serializeContent(newVal, comments.value),
+          docId: _snapId,
+          content: _snapContent,
         });
         draftSaveStatus.value = "saved";
         const now = new Date();
@@ -677,6 +683,7 @@ export const useDocumentStore = defineStore("document", () => {
 
   /** 切换到指定文档 */
   async function switchDocument(docId: string) {
+    _activeSwitchDocId = docId; // 记录最新目标（同目标重复点击也会刷新为同一 docId）
     error.value = "";
     draftLoaded.value = false;
     viewingVersionId.value = ""; // 切换文档时退出历史版本查看
@@ -690,14 +697,18 @@ export const useDocumentStore = defineStore("document", () => {
       // 加载该文档的排版设置（per-document）
       const exportSettingsStore = useExportSettingsStore();
       await exportSettingsStore.loadForDocument(docId);
+      // 仅当"目标已被不同文档的切换取代"才丢弃；同目标补点不丢，第一次即生效
+      if (_activeSwitchDocId !== docId) return;
 
       // 先尝试恢复草稿内容
       const draft = await invoke<string | null>("get_draft", { docId });
+      if (_activeSwitchDocId !== docId) return; // 已被不同文档的切换取代，丢弃
       if (draft) {
         applyParsed(parseContent(draft));
       } else {
         // 没有草稿，获取最新版本内容
         const list = await invoke<Version[]>("get_versions", { docId });
+        if (_activeSwitchDocId !== docId) return; // 已被不同文档的切换取代，丢弃
         applyParsed(parseContent(list.length > 0 ? list[list.length - 1].content : null));
       }
 

@@ -294,6 +294,12 @@ export const useCompareStore = defineStore('compare', () => {
     }
   }
 
+  /** 仅确保指定 tab 展开，不会因已在该 tab 而关闭（编辑等需强制展开场景） */
+  function ensureTab(tab: 'comment' | 'compare' | 'proofread') {
+    panelOpen.value = true
+    activeTab.value = tab
+  }
+
   function closePanel() {
     panelOpen.value = false
   }
@@ -332,6 +338,7 @@ export const useCompareStore = defineStore('compare', () => {
     restorePrevious,
     deleteSession,
     openTab,
+    ensureTab,
     closePanel,
     clearAll,
   }

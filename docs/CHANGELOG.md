@@ -1,5 +1,21 @@
 # AiPen 更新日志
 
+## v4.3.4 (2026-07-23)
+
+### 🐛 修复
+
+- **查看历史版本后切换模块会覆盖草稿**：在文档编辑中查看某历史版本（此时 `currentContent` 已被替换为版本内容、进入 `isViewingHistory` 状态），再切到素材 / 浏览器等模块，触发「切走即存草稿」逻辑，会把版本内容当成草稿写入，覆盖用户真实草稿，切回后历史版本覆盖草稿、退出历史查看编辑全部丢失。修复：`EditorView.vue` 的 `watch(leftSubTab)` 自动保存增加 `!isViewingHistory.value` 守卫，查看历史版本时离开不再覆盖草稿；不影响正常编辑的草稿保存，也未触碰上次「不同文档串稿」修复（`document.ts` 的 `switchDocument` 去重与 `watch(currentContent)` 守卫）。
+
+---
+
+## v4.3.3 (2026-07-21)
+
+### 🐛 修复（严重）
+
+- **切换文档时草稿被互相覆盖（串稿）**：快速来回切换文档时，上一版为修复串稿而引入的 `_switchToken` / `_loadToken`「调用序号」去重存在缺陷——异步切换/渲染结果（`get_draft` + `applyParsed` / `setContent`）可能落到错误的目标文档上，使一篇文档的内容被写入另一篇文档的草稿，或编辑器残留旧文档内容。该去重还会误丢「同目标重复点击」的有效切换，导致大文档切换需点两次（见下）。修复：去重判据由「调用序号」改为「目标文档 id」——`switchDocument` 记录 `_activeSwitchDocId`、`modelValue` watch 捕获 `myDocId = docStore.currentDocId`，仅在「目标已不是当前活动文档」时才丢弃过期结果，确保任一文档的内容只落到自身草稿、互不覆盖（仍防串稿）；同目标补点不再丢弃第一次切换，连带消除了「大文档切换需点两次」的回归。改动位于 `src/stores/document.ts` 与 `src/components/RichEditor.vue`。
+
+---
+
 ## v4.3.1 (2026-07-17)
 
 ### 🐛 修复

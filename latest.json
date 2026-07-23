@@ -1,11 +1,11 @@
 {
-  "pub_date": "2026-07-17T13:01:48Z",
+  "version": "4.3.4",
+  "notes": "### 修复\n- 查看历史版本后切换素材/浏览器等模块会覆盖草稿：EditorView 的切走即存草稿逻辑新增 isViewingHistory 守卫，查看历史版本时离开不再把版本内容当草稿写入，避免覆盖真实草稿；不影响正常编辑的草稿保存，也未触碰上次不同文档串稿修复。",
+  "pub_date": "2026-07-23T01:52:24Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://exe1.webgetstore.com/2026/07/17/5bcd91e38359286040449add9496e011.exe?sg=7152de014226504b7394e44206cff327&e=6a5a26be&fileName=AiPen_4.3.1_x64-setup.exe&fi=299003458",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk4xdUxESjdsbXR1Y1lYSmZVYUtsQ3NPRVJnZGxQMm9scUVSOFRaNXdSR2RiU0xya3hFZ0xkMXlybnRIOTVmaHV5YlBPTmxYdTF6ZUdWSWN6c2pmSGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MjkyNjk1CWZpbGU6QWlQZW5fNC4zLjFfeDY0LXNldHVwLmV4ZQpUeUV4cktoZWo0YTR5U1lJWkhIbWRidm1Zd0NUUm5yc0ZuRzlrVS8ySkV2WlQwQnNGN1U2VytWcFpSOFZGU3ErcThkeDhhYmdBa2lOZEJYYzIyYmJEUT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk82c3hEeDRCKzRHQnVBWWt0L1Q5aVQ0VGMwaVpXRXhGNW1aaFYxM1o2dWdDRWJxUGduRysvODY0KzBzYTRIOFE0MlhrbW9peWRrQXc5U0FHOG4yWGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NzcxNTE2CWZpbGU6QWlQZW5fNC4zLjRfeDY0LXNldHVwLmV4ZQp5NkRZaDRrWjZKQ0EzT3BFM1BybE9nM3RiL2wxNlhRUmNtZGpIc1JTZ1h5dmNIUjI1QVd5dDFSWUNrNDNCa2RaTm1MNWl6d1cwUkQxVWJaVW1IRTZEdz09Cg==",
+      "url": "https://exe1.webgetstore.com/2026/07/23/781345564777922c36f18227133fae6f.exe?sg=b1254a4c57f9efcf16d5673778429924&e=6a6174ab&fileName=AiPen_4.3.4_x64-setup.exe&fi=300973411"
     }
-  },
-  "notes": "## v4.3.1 (2026-07-17)\r\n\r\n### 🐛 修复\r\n\r\n- **删除批注后批注重现**：删除批注时清理正文下划虚线 mark 的动作被同步标记早退拦截，未回流到 currentContent，导致 1 秒防抖保存未触发、草稿里仍存旧数据；切文档再切回时批注与下划线重新出现。修复点在 RichEditor.vue 两处 ghost/孤儿 mark 清理后显式回流当前 JSON，使其像普通编辑一样触发 1 秒防抖落库（历史版本快照不受影响）。\r\n\r\n---",
-  "version": "4.3.1"
+  }
 }

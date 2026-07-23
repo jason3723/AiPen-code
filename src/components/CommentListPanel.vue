@@ -57,7 +57,7 @@ watch(() => store.editingCommentId, (id) => {
   if (id) {
     const c = sortedComments.value.find(c => c.id === id)
     if (c) editText.value = c.text
-    compareStore.openTab('comment')
+    compareStore.ensureTab('comment')
   }
 })
 const editText = ref<string>('')
@@ -268,7 +268,7 @@ defineExpose({ open: panelOpen })
                     v-if="editingId === c.id"
                     v-model="editText"
                     :maxlength="500"
-                    rows="5"
+                    rows="15"
                     class="comment-list-editarea"
                     @keyup.esc="cancelEdit"
                     @keyup.ctrl.enter="confirmEdit"
@@ -753,6 +753,9 @@ defineExpose({ open: panelOpen })
 }
 .comment-list-item.is-editing {
   background: #fffbeb;
+}
+.comment-list-item.is-editing .comment-list-order {
+  display: none;
 }
 
 .comment-list-top {

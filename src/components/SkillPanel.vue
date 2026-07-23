@@ -14,8 +14,10 @@ import {
   removeSkillHistory,
   type SkillHistoryEntry,
 } from "../utils/skillHistory";
+import { useConfirm } from "../composables/useConfirm";
 
 const { isDark } = useTheme();
+const { confirm } = useConfirm();
 
 // 呼吸灯带主题色
 const breathTrackBg = computed(() => isDark.value ? 'rgba(30,41,59,0.6)' : 'rgba(0,0,0,0.08)');
@@ -394,6 +396,13 @@ async function stopPipeline() {
 }
 
 async function handleDelete(skill: Skill) {
+  const ok = await confirm({
+    title: "删除技能",
+    message: `确定要删除自定义技能「${skill.name}」吗？此操作不可撤销。`,
+    kind: "danger",
+    okLabel: "删除",
+  });
+  if (!ok) return;
   try {
     await invoke("delete_skill", { skillId: skill.id });
     skills.value = skills.value.filter((s) => s.id !== skill.id);
