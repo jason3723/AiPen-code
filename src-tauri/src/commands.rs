@@ -1681,6 +1681,48 @@ pub async fn set_material_tags(
         .await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn save_material_note(
+    state: State<'_, crate::AppState>,
+    material_id: String,
+    content: String,
+) -> Result<String, String> {
+    db::save_material_note(&state.db, &material_id, &content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_material_notes(
+    state: State<'_, crate::AppState>,
+    material_id: String,
+) -> Result<Vec<db::MaterialNote>, String> {
+    db::list_material_notes(&state.db, &material_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_material_note(
+    state: State<'_, crate::AppState>,
+    note_id: String,
+    content: String,
+) -> Result<(), String> {
+    db::update_material_note(&state.db, &note_id, &content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_material_note(
+    state: State<'_, crate::AppState>,
+    note_id: String,
+) -> Result<(), String> {
+    db::delete_material_note(&state.db, &note_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ─── 全域搜索命令 ────────────────────────────────────────────────
 
 #[derive(serde::Serialize, serde::Deserialize)]

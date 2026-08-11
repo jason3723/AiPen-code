@@ -1,11 +1,11 @@
 {
-  "version": "4.3.4",
-  "notes": "### 修复\n- 查看历史版本后切换素材/浏览器等模块会覆盖草稿：EditorView 的切走即存草稿逻辑新增 isViewingHistory 守卫，查看历史版本时离开不再把版本内容当草稿写入，避免覆盖真实草稿；不影响正常编辑的草稿保存，也未触碰上次不同文档串稿修复。",
-  "pub_date": "2026-07-23T01:52:24Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk82c3hEeDRCKzRHQnVBWWt0L1Q5aVQ0VGMwaVpXRXhGNW1aaFYxM1o2dWdDRWJxUGduRysvODY0KzBzYTRIOFE0MlhrbW9peWRrQXc5U0FHOG4yWGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NzcxNTE2CWZpbGU6QWlQZW5fNC4zLjRfeDY0LXNldHVwLmV4ZQp5NkRZaDRrWjZKQ0EzT3BFM1BybE9nM3RiL2wxNlhRUmNtZGpIc1JTZ1h5dmNIUjI1QVd5dDFSWUNrNDNCa2RaTm1MNWl6d1cwUkQxVWJaVW1IRTZEdz09Cg==",
-      "url": "https://exe1.webgetstore.com/2026/07/23/781345564777922c36f18227133fae6f.exe?sg=b1254a4c57f9efcf16d5673778429924&e=6a6174ab&fileName=AiPen_4.3.4_x64-setup.exe&fi=300973411"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc0ZtdEhaUzlNVk96RVBNMDJCb2thekUzdXJHY3ZkUHdERkpnZnJGYXAvNUoxV1pkeTRnUnAxZktxQlRlbm54cVJ2b0M4bmJxVHluaCszLytIM2pnUER4eFdFQ2dCc2drPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1NDgwMzYwCWZpbGU6QWlQZW5fNC4zLjVfeDY0LXNldHVwLmV4ZQowdEJVTENsdjJnZjN4a1VEU3J6NEJBb1NnUVdzRmtGc0hNSnpwTGJqZWRKU3hlRitNYmI2bU1BTFlVa1E0NVhhbkY5NUFqM3kzeHh5U1lXMnAzbEFCZz09Cg==",
+      "url": "https://github.com/jason3723/AiPen/releases/latest/download/AiPen_4.3.5_x64-setup.exe"
     }
-  }
+  },
+  "notes": "✨ 新增\n- 碎念随素材导出 / 导入\n\n🐛 修复\n- 浏览器模块状态栏被左侧导航面板遮挡",
+  "pub_date": "2026-07-31T06:46:38Z",
+  "version": "4.3.5"
 }

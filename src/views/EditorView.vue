@@ -2554,7 +2554,7 @@ async function handleExportWord() {
     </div>
 
     <!-- 状态栏 -->
-    <footer data-tauri-drag-region class="flex items-center px-4 h-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 drag-region">
+    <footer data-tauri-drag-region class="relative z-20 flex items-center px-4 h-6 border-t border-gray-200 dark:border-gray-800 bg-gray-100/80 dark:bg-gray-900/50 shrink-0 drag-region">
       <div class="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-600 no-drag">
         <span v-if="editMode === 'document' && currentContent">
           字数: {{ typeof currentContent === 'object' && currentContent.content ? currentContent.content.reduce(

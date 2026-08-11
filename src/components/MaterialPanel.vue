@@ -4,6 +4,8 @@ import { useMaterialStore, type Bookmark } from "../stores/materialStore";
 import { materialFontFamily, materialFontSize, MATERIAL_FONT_OPTIONS, MATERIAL_FONT_SIZE_OPTIONS } from "../stores/materialStore";
 import { useConfirm } from "../composables/useConfirm";
 
+import MaterialEntryDialog from "./MaterialEntryDialog.vue";
+
 const props = defineProps<{
   subTab: "materials" | "browser";
   activeMaterialId: string | null;
@@ -35,6 +37,8 @@ const emit = defineEmits<{
 }>();
 
 const { confirm } = useConfirm();
+
+const manualEntryTagId = ref<string | null>(null);
 
 // ── 素材 Tab ──
 
@@ -349,6 +353,12 @@ function toggleFontPanel() {
             :title="item.isUncategorized ? `删除全部${uncategorizedLabel}素材` : '删除'"
             @click.stop="item.isUncategorized ? handleDeleteUncategorized() : handleDeleteTag(item.tag!.id)"
           >✕</button>
+          <button
+            v-if="!item.isUncategorized"
+            class="h-5 w-5 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+            title="手动录入素材到此标签"
+            @click.stop="manualEntryTagId = item.tag!.id; store.selectTagDocument(item.tag!.id)"
+          >＋</button>
         </div>
       </div>
       <!-- 空状态 -->
@@ -363,6 +373,11 @@ function toggleFontPanel() {
   </div>
 
   <!-- 浏览器 Tab -->
+  <MaterialEntryDialog
+    v-if="manualEntryTagId"
+    :tag-id="manualEntryTagId"
+    @close="manualEntryTagId = null"
+  />
   <div v-if="subTab === 'browser'" class="flex flex-col h-full">
     <!-- 添加书签 -->
     <div class="px-2 py-2 border-b border-gray-200 dark:border-gray-800 space-y-1.5">

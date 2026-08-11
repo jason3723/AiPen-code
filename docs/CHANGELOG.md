@@ -1,5 +1,17 @@
 # AiPen 更新日志
 
+## v4.3.5 (2026-07-31)
+
+### ✨ 新增
+
+- **碎念随素材导出 / 导入**：碎念原本只存在本地库、不跟随迁移，换机或恢复备份会丢。现在 `ExportMaterial` 增加 `notes` 字段，导出素材（含全量导出与勾选导出）时顺带带上该素材的全部碎念；导入时按原始 `created_at` 原样写回 `material_notes`，与素材同生同灭。改动位于 `src-tauri/src/db.rs` 的 `ExportMaterial` 结构体、`build_materials` 导出循环与 `import_data` 导入循环。
+
+### 🐛 修复
+
+- **浏览器模块状态栏被左侧导航面板遮挡**：主界面底部状态栏 `<footer>`（静态层、无 `z-index`）被 `relative z-10` 的左侧导航 `<aside>` 压住。已给状态栏加 `relative z-20`，使其恒在左栏之上、始终可见。改动位于 `src/views/EditorView.vue`。
+
+---
+
 ## v4.3.4 (2026-07-23)
 
 ### 🐛 修复

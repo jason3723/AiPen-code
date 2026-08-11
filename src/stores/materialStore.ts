@@ -119,6 +119,13 @@ export interface Bookmark {
   created_at: string;
 }
 
+export interface MaterialNote {
+  id: string;
+  material_id: string;
+  content: string;
+  created_at: string;
+}
+
 export interface SuggestTagsResult {
   matched_tags: string[];
   suggested_new_tags: string[];
@@ -151,6 +158,9 @@ export const useMaterialStore = defineStore("material", () => {
   const tags = ref<MaterialTag[]>([]);
   const tagWithCounts = ref<TagWithCount[]>([]);
   const bookmarks = ref<Bookmark[]>([]);
+
+  const materialNotes = ref<MaterialNote[]>([]);
+  const noteCount = ref(0);
   const currentMaterialId = ref<string | null>(null);
   const currentMaterialContent = ref<any>("");
   const currentTagDocumentId = ref<string | null>(null); // 当前选中的标签文档（null=未分类）
@@ -629,6 +639,54 @@ export const useMaterialStore = defineStore("material", () => {
     bookmarks.value = bookmarks.value.filter(b => b.id !== bmId);
   }
 
+  // ── 碎念（素材笔记） ──
+  async function loadNotes(matId: string | null): Promise<MaterialNote[]> {
+    if (!matId) {
+      materialNotes.value = [];
+      noteCount.value = 0;
+      return [];
+    }
+    try {
+      const list = await invoke<MaterialNote[]>("list_material_notes", { materialId: matId });
+      materialNotes.value = list;
+      noteCount.value = list.length;
+      return list;
+    } catch (e) {
+      console.error("加载碎念失败:", e);
+      materialNotes.value = [];
+      noteCount.value = 0;
+      return [];
+    }
+  }
+
+  async function addNote(matId: string, content: string): Promise<MaterialNote[]> {
+    try {
+      await invoke("save_material_note", { materialId: matId, content });
+      return await loadNotes(matId);
+    } catch (e) {
+      console.error("新增碎念失败:", e);
+      return [];
+    }
+  }
+
+  async function updateNote(noteId: string, content: string) {
+    try {
+      await invoke("update_material_note", { noteId, content });
+    } catch (e) {
+      console.error("编辑碎念失败:", e);
+    }
+  }
+
+  async function deleteNote(noteId: string, matId: string): Promise<MaterialNote[]> {
+    try {
+      await invoke("delete_material_note", { noteId });
+      return await loadNotes(matId);
+    } catch (e) {
+      console.error("删除碎念失败:", e);
+      return [];
+    }
+  }
+
   // ── 迁移：将现有纯文本素材转为 ProseMirror JSON ──
   async function migrateMaterialsToJson() {
     const needsMigration: { id: string; content: string }[] = []
@@ -710,5 +768,11 @@ export const useMaterialStore = defineStore("material", () => {
     fetchBookmarkFavicon,
     clearBookmarkFavicon,
     init,
+    loadNotes,
+    addNote,
+    updateNote,
+    deleteNote,
+    materialNotes,
+    noteCount,
   };
 });

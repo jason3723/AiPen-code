@@ -116,6 +116,14 @@ pub struct MaterialTag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialNote {
+    pub id: String,
+    pub material_id: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialWithTags {
     pub id: String,
     pub title: String,
@@ -361,6 +369,16 @@ pub async fn init_db(db_path: &Path) -> Result<Pool<Sqlite>, DbError> {
         "CREATE TABLE IF NOT EXISTS material_tags (
             id   TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE
+        )"
+    ).execute(&pool).await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS material_notes (
+            id   TEXT PRIMARY KEY,
+            material_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
         )"
     ).execute(&pool).await?;
 
@@ -4710,6 +4728,9 @@ pub struct ExportMaterial {
     pub source_title: Option<String>,
     pub created_at: String,
     pub tags: Vec<String>, // tag names
+    /// 该素材下的全部碎念，随素材一同导出/导入
+    #[serde(default)]
+    pub notes: Vec<MaterialNote>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4860,6 +4881,22 @@ pub async fn export_all_data(pool: &Pool<Sqlite>) -> Result<ExportPackage, DbErr
     for mat_row in &mat_rows {
         let mat_id: String = mat_row.get("id");
         let tags = get_tags_for_material(pool, &mat_id).await.unwrap_or_default();
+        // 取该素材下的全部碎念，随素材一起导出
+        let note_rows = sqlx::query(
+            "SELECT id, content, created_at FROM material_notes WHERE material_id = ?"
+        )
+        .bind(&mat_id)
+        .fetch_all(pool)
+        .await?;
+        let notes: Vec<MaterialNote> = note_rows
+            .iter()
+            .map(|row| MaterialNote {
+                id: row.get("id"),
+                material_id: mat_id.clone(),
+                content: row.get("content"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
         materials.push(ExportMaterial {
             title: mat_row.get("title"),
             content: mat_row.get("content"),
@@ -4867,6 +4904,7 @@ pub async fn export_all_data(pool: &Pool<Sqlite>) -> Result<ExportPackage, DbErr
             source_title: mat_row.get("source_title"),
             created_at: mat_row.get("created_at"),
             tags: tags.into_iter().map(|t| t.name).collect(),
+            notes,
         });
     }
 
@@ -5186,6 +5224,17 @@ pub async fn import_all_data(pool: &Pool<Sqlite>, data: &ExportPackage) -> Resul
              .execute(pool).await?;
             mat_count += 1;
         }
+        // 导入该素材下的碎念（保留原始创建时间）
+        for note in &mat.notes {
+            sqlx::query(
+                "INSERT INTO material_notes (id, material_id, content, created_at) VALUES (?, ?, ?, ?)"
+            )
+            .bind(&note.id)
+            .bind(&mat_id)
+            .bind(&note.content)
+            .bind(&note.created_at)
+            .execute(pool).await?;
+        }
 
         // Link tags: reuse existing tag by name, create new if not found.
         // For existing materials, this restores tags that may have been deleted.
@@ -5477,6 +5526,76 @@ pub async fn set_material_tags(
         sqlx::query("INSERT OR IGNORE INTO material_tag_links (material_id, tag_id) VALUES (?, ?)")
             .bind(mat_id).bind(tag_id).execute(pool).await?;
     }
+    Ok(())
+}
+
+// ─── 碎念（素材笔记） ──────────────────────────────────────────
+
+/// 列出某素材下的全部碎念（按时间正序）
+pub async fn list_material_notes(
+    pool: &Pool<Sqlite>,
+    material_id: &str,
+) -> Result<Vec<MaterialNote>, DbError> {
+    let rows = sqlx::query(
+        "SELECT id, material_id, content, created_at FROM material_notes WHERE material_id = ? ORDER BY created_at ASC"
+    )
+    .bind(material_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| MaterialNote {
+            id: row.get("id"),
+            material_id: row.get("material_id"),
+            content: row.get("content"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
+}
+
+/// 新增一条碎念
+pub async fn save_material_note(
+    pool: &Pool<Sqlite>,
+    material_id: &str,
+    content: &str,
+) -> Result<String, DbError> {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO material_notes (
+          id, material_id, content, created_at
+        ) VALUES (?, ?, ?, datetime('now', 'localtime'))"
+    )
+    .bind(&id)
+    .bind(material_id)
+    .bind(content)
+    .execute(pool)
+    .await?;
+    Ok(id)
+}
+
+/// 编辑某条碎念内容
+pub async fn update_material_note(
+    pool: &Pool<Sqlite>,
+    note_id: &str,
+    content: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE material_notes SET content = ? WHERE id = ?")
+        .bind(content)
+        .bind(note_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// 删除某条碎念
+pub async fn delete_material_note(
+    pool: &Pool<Sqlite>,
+    note_id: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM material_notes WHERE id = ?")
+        .bind(note_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

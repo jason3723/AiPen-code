@@ -36,6 +36,7 @@ import { useMaterialStore } from '../stores/materialStore'
 import { useCandidateStore } from '../stores/candidateStore'
 import { useCompareStore } from '../stores/compareStore'
 import { useProofreadStore } from '../stores/proofreadStore'
+import MaterialNoteBox from '../components/MaterialNoteBox.vue'
 import type { ProofreadIssue } from '../stores/proofreadStore'
 import { useExportSettingsStore } from '../stores/exportSettings'
 import { textToDocJson } from '../utils/textToDocJson'
@@ -356,6 +357,13 @@ const emit = defineEmits<{
 
 const docStore = useDocumentStore()
 const materialStore = useMaterialStore()
+const noteBoxRef = ref<InstanceType<typeof MaterialNoteBox> | null>(null)
+/** 碎念所属素材 id：标签视图下由父级按卡片传入 props.materialId；单素材视图回退到全局选中 id */
+const noteMaterialId = computed(() => props.materialId || materialStore.currentMaterialId || '')
+/** 💭 碎念按钮只负责让输入框出现（碎念区本身默认就在卡片内可见） */
+function openNoteInput() {
+  noteBoxRef.value?.openInput()
+}
 const candidateStore = useCandidateStore()
 const compareStore = useCompareStore()
 const proofreadStore = useProofreadStore()
@@ -2973,12 +2981,18 @@ function btnClass(active: boolean) {
                 </div>
               </div>
               <div class="material-card-actions">
+                <button v-if="noteMaterialId" class="mc-btn" title="给这张素材卡片写碎念" @click="openNoteInput">💭 碎念</button>
                 <button class="mc-btn" title="复制素材内容（有选区则复制选区）" @mousedown.prevent="onCardCopy">📋 复制</button>
                 <button v-if="inTag" class="mc-btn" title="从当前标签移除该素材" @mousedown.prevent="onCardRemoveFromTag">⬅ 从此标签移除</button>
                 <button class="mc-btn mc-btn-danger" title="从素材库删除该素材" @mousedown.prevent="onCardDelete">🗑 删除</button>
               </div>
             </div>
             <EditorContent :editor="editor" class="rich-content material-card-body" :style="{ color: contentText }" />
+            <MaterialNoteBox
+              v-if="noteMaterialId"
+              ref="noteBoxRef"
+              :material-id="noteMaterialId"
+            />
           </div>
         </div>
       </template>
